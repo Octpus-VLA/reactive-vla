@@ -20,7 +20,8 @@ import re
 import shutil
 import subprocess
 import time
-from enum import Enum
+from contextlib import suppress
+from enum import StrEnum
 from pathlib import Path
 
 import serial.tools.list_ports
@@ -43,7 +44,7 @@ HALF_TURN = 2047  # int((4096 - 1) / 2) for a 12-bit sts3215 encoder
 MAX_OFFSET = 2047  # 11-bit sign-magnitude limit of the Homing_Offset register
 
 
-class Role(str, Enum):
+class Role(StrEnum):
     leader = "leader"
     follower = "follower"
 
@@ -483,16 +484,12 @@ def _kill_new_rerun(before: set[int]) -> None:
     if not victims:
         return
     for p in victims:
-        try:
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             p.terminate()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
     _, alive = psutil.wait_procs(victims, timeout=3)
     for p in alive:
-        try:
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             p.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
     typer.secho(f"(closed {len(victims)} leftover Rerun viewer process(es))", fg="yellow")
 
 
@@ -783,7 +780,7 @@ def drop(
     try:
         idx = sorted({int(e) for e in episodes.split(",")})
     except ValueError:
-        raise typer.BadParameter(f"--episodes must be comma-separated integers, got '{episodes}'")
+        raise typer.BadParameter(f"--episodes must be comma-separated integers, got '{episodes}'") from None
     cmd = [
         "lerobot-edit-dataset",
         f"--repo_id={repo}",
@@ -902,7 +899,7 @@ def upload(
     except Exception as exc:  # surface a clean hint instead of a raw traceback
         raise typer.BadParameter(
             f"Upload failed ({type(exc).__name__}: {exc}). Are you logged in? Run: pixi run hf-login"
-        )
+        ) from None
     typer.secho(f"Uploaded → https://huggingface.co/datasets/{repo}", fg="green")
 
 
