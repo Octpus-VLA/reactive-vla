@@ -1,0 +1,907 @@
+"""Convenience CLI for the SO-101 leader/follower arms.
+
+Register each arm once by role (leader / follower) and the port + id are saved to
+`.so101_arms.json`, so later commands never need `--port` / `--id` again:
+
+    pixi run set-port leader      # unplug-detect & save the leader's serial port
+    pixi run set-port follower    # same for the follower
+    pixi run check follower       # per-motor diagnostic on the saved port
+    pixi run calibrate leader     # lerobot-calibrate with the saved settings
+    pixi run teleop               # lerobot-teleoperate with both saved arms
+
+Extra flags after `calibrate` / `teleop` are forwarded to the underlying lerobot
+command, e.g. `pixi run teleop --robot.cameras='{...}' --display-data=true`.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+import time
+from contextlib import suppress
+from enum import StrEnum
+from pathlib import Path
+
+import serial.tools.list_ports
+import typer
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus
+
+CONFIG_PATH = Path(__file__).resolve().parent.parent / ".so101_arms.json"
+
+# SO-101 leader and follower share the same bus layout (IDs 1-6, all sts3215).
+MOTOR_IDS: dict[str, int] = {
+    "shoulder_pan": 1,
+    "shoulder_lift": 2,
+    "elbow_flex": 3,
+    "wrist_flex": 4,
+    "wrist_roll": 5,
+    "gripper": 6,
+}
+HALF_TURN = 2047  # int((4096 - 1) / 2) for a 12-bit sts3215 encoder
+MAX_OFFSET = 2047  # 11-bit sign-magnitude limit of the Homing_Offset register
+
+
+class Role(StrEnum):
+    leader = "leader"
+    follower = "follower"
+
+
+# Per-role defaults: lerobot CLI flag prefix, device type, and a default id whose
+# calibration is reused across runs.
+ROLE_META: dict[str, dict[str, str]] = {
+    "leader": {"prefix": "teleop", "type": "so101_leader", "id": "my_awesome_leader_arm"},
+    "follower": {"prefix": "robot", "type": "so101_follower", "id": "my_awesome_follower_arm"},
+}
+
+app = typer.Typer(
+    add_completion=False, help="Register SO-101 arms by role and drive them without typing ports."
+)
+
+
+def _load() -> dict:
+    if CONFIG_PATH.exists():
+        return json.loads(CONFIG_PATH.read_text())
+    return {}
+
+
+def _save(cfg: dict) -> None:
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+
+
+def _ports() -> set[str]:
+    return {p.device for p in serial.tools.list_ports.comports()}
+
+
+def _require(cfg: dict, role: str) -> dict:
+    if role not in cfg:
+        raise typer.BadParameter(f"'{role}' is not registered yet. Run: pixi run set-port {role}")
+    return cfg[role]
+
+
+def _cameras_arg(cams: dict) -> str:
+    """Render a saved cameras dict into lerobot's draccus CLI form."""
+    parts = [
+        f"{name}: {{type: {c['type']}, index_or_path: {c['index_or_path']}, "
+        f"width: {c['width']}, height: {c['height']}, fps: {c['fps']}}}"
+        for name, c in cams.items()
+    ]
+    return "{ " + ", ".join(parts) + "}"
+
+
+PASSTHROUGH = {"allow_extra_args": True, "ignore_unknown_options": True}
+
+
+def _add_cameras_display(cmd: list[str], foll: dict, extra: list[str], cameras: bool, display: bool) -> None:
+    """Append the follower's `--robot.cameras` and `--display_data` unless the user passed their own."""
+    user_cams = any(a.startswith("--robot.cameras") for a in extra)
+    user_disp = any(a.startswith(("--display_data", "--display-data")) for a in extra)
+    if cameras and foll.get("cameras") and not user_cams:
+        cmd.append(f"--robot.cameras={_cameras_arg(foll['cameras'])}")
+    if display and not user_disp:
+        cmd.append("--display_data=true")
+
+
+def _add_max_rel(cmd: list[str], extra: list[str], max_rel: float | None) -> None:
+    """Cap how far the follower may move per control step (degrees), for a gentler, safer motion."""
+    if max_rel is not None and not any(a.startswith("--robot.max_relative_target") for a in extra):
+        cmd.append(f"--robot.max_relative_target={max_rel}")
+
+
+def _hf_user() -> str | None:
+    """Hugging Face username via the saved token (huggingface_hub API); None if not logged in."""
+    try:
+        from huggingface_hub import whoami
+
+        return whoami().get("name")
+    except Exception:
+        return None
+
+
+def _resolve_repo(repo_id: str, for_creation: bool = False) -> str:
+    """Turn a bare `name` into `user/name`; pass `user/name` through unchanged.
+
+    Namespace lookup order: explicit (has '/') > HF login > existing local dataset
+    under $HF_LEROBOT_HOME (any namespace). When creating a new dataset without an
+    HF login, fall back to the 'local' namespace; when *consuming* one, error out
+    instead — a guessed namespace would send lerobot to the Hub and 401/404 there.
+    """
+    if "/" in repo_id:
+        return repo_id
+    user = _hf_user()
+    if user:
+        return f"{user}/{repo_id}"
+    if for_creation:
+        typer.secho(f"(not logged in to HF — creating dataset under local/{repo_id})", fg="yellow")
+        return f"local/{repo_id}"
+    try:
+        from lerobot.utils.constants import HF_LEROBOT_HOME
+
+        candidates = sorted(
+            p
+            for p in Path(HF_LEROBOT_HOME).glob(f"*/{repo_id}")
+            # Skip junk dirs: a HF namespace is alphanumeric with -_. and no spaces.
+            if p.is_dir() and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", p.parent.name)
+        )
+    except Exception:
+        candidates = []
+    if len(candidates) == 1:
+        ns = candidates[0].parent.name
+        typer.secho(f"(not logged in to HF — using local dataset {ns}/{repo_id})", fg="yellow")
+        return f"{ns}/{repo_id}"
+    if len(candidates) > 1:
+        names = ", ".join(f"{c.parent.name}/{repo_id}" for c in candidates)
+        raise typer.BadParameter(
+            f"Multiple local datasets named '{repo_id}' ({names}). Pass the full 'user/name'."
+        )
+    raise typer.BadParameter(
+        f"Can't resolve '{repo_id}': not logged in to Hugging Face and no local dataset named "
+        f"'{repo_id}' under ~/.cache/huggingface/lerobot. Either pass the full id (e.g. "
+        f"<user>/{repo_id}), run `pixi run hf-login`, or copy the dataset to "
+        f"~/.cache/huggingface/lerobot/<user>/{repo_id} first (rsync)."
+    )
+
+
+def _resolve_policy(policy: str) -> str:
+    """Resolve a policy reference to what lerobot loads: a checkpoint's `pretrained_model` dir or a Hub id."""
+    p = Path(policy)
+    if p.exists():
+        # A checkpoint dir holds the loadable policy under `pretrained_model/` (alongside `training_state/`).
+        if p.is_dir() and (p / "pretrained_model").is_dir() and not (p / "config.json").exists():
+            return str(p / "pretrained_model")
+        return policy
+    # Not a local path → lerobot would treat it as a Hub repo id, which must be exactly 'namespace/name'.
+    if policy.count("/") != 1:
+        raise typer.BadParameter(
+            f"Policy '{policy}' is not a local path and is not a valid Hub repo id ('user/name'). "
+            f"Check for typos; a local checkpoint looks like "
+            f"outputs/train/<job>/checkpoints/last/pretrained_model"
+        )
+    return policy
+
+
+def _dataset_root(repo_id: str) -> Path:
+    """Local directory where lerobot stores a dataset: $HF_LEROBOT_HOME/<repo_id>."""
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+
+    return Path(HF_LEROBOT_HOME) / repo_id
+
+
+def _maybe_overwrite(repo: str, overwrite: bool) -> None:
+    """Delete an existing local dataset dir so lerobot-record can recreate it."""
+    if not overwrite:
+        return
+    root = _dataset_root(repo)
+    if root.exists():
+        typer.secho(f"--overwrite: removing existing dataset at {root}", fg="yellow")
+        shutil.rmtree(root)
+
+
+def _safe_video_backend() -> str | None:
+    """Return 'pyav' when torchcodec is installed but cannot actually load its native libs
+    (e.g. old system libstdc++ on the host clashing with the env's ffmpeg); None = use lerobot default.
+
+    lerobot's own default only checks that torchcodec is *installed*, so a broken load
+    crashes mid-training in a dataloader worker. pyav ships its own ffmpeg and always works.
+    """
+    try:
+        from torchcodec.decoders import VideoDecoder  # noqa: F401
+
+        return None
+    except Exception:
+        typer.secho("(torchcodec can't load on this machine — using video_backend=pyav)", fg="yellow")
+        return "pyav"
+
+
+def _auto_device() -> str:
+    """Pick the best available torch device: cuda > mps > cpu."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
+@app.command("find-port")
+def find_port(
+    role: Role,
+    id: str = typer.Option(None, help="Calibration id to store (defaults to a per-role name)."),
+    type: str = typer.Option(None, help="lerobot device type (defaults to so101_leader/so101_follower)."),
+) -> None:
+    """Detect the serial port of the ROLE board by unplugging it, then save it."""
+    meta = ROLE_META[role.value]
+    before = _ports()
+    if not before:
+        typer.secho("No serial ports found at all — is anything connected?", fg="red")
+        raise typer.Exit(1)
+
+    typer.echo(f"Currently connected ports: {sorted(before)}")
+    typer.echo(f"Unplug the USB cable of the {role.value} board, then press Enter...")
+    input()
+
+    removed: set[str] = set()
+    for _ in range(20):  # poll up to ~5 s for the OS to drop the device
+        removed = before - _ports()
+        if removed:
+            break
+        time.sleep(0.25)
+
+    if len(removed) == 0:
+        typer.secho("No port disappeared. Did you unplug the right board?", fg="red")
+        raise typer.Exit(1)
+    if len(removed) > 1:
+        typer.secho(
+            f"Multiple ports disappeared ({sorted(removed)}). Unplug only the {role.value}.", fg="red"
+        )
+        raise typer.Exit(1)
+
+    port = removed.pop()
+    typer.echo(f"Reconnect the {role.value} cable now, then press Enter...")
+    input()
+
+    cfg = _load()
+    cfg[role.value] = {
+        "port": port,
+        "id": id or cfg.get(role.value, {}).get("id") or meta["id"],
+        "type": type or cfg.get(role.value, {}).get("type") or meta["type"],
+    }
+    _save(cfg)
+    typer.secho(f"Saved {role.value}: {cfg[role.value]}  ->  {CONFIG_PATH.name}", fg="green")
+
+
+@app.command()
+def show() -> None:
+    """Print the registered arms and cameras."""
+    cfg = _load()
+    if not cfg:
+        typer.echo("No arms registered yet. Run: pixi run set-port leader / follower")
+        return
+    for role, info in cfg.items():
+        typer.echo(f"{role:9s} port={info['port']}  id={info['id']}  type={info['type']}")
+        for name, c in info.get("cameras", {}).items():
+            typer.echo(
+                f"          camera '{name}': index={c['index_or_path']} {c['width']}x{c['height']}@{c['fps']} ({c['type']})"
+            )
+
+
+@app.command("set-camera")
+def set_camera(
+    name: str = typer.Argument(..., help="Camera name shown in the viewer, e.g. 'front' or 'wrist'."),
+    index: int = typer.Option(0, help="OpenCV camera index from `pixi run find-cameras`."),
+    width: int = typer.Option(640, help="Requested frame width."),
+    height: int = typer.Option(480, help="Requested frame height."),
+    fps: int = typer.Option(30, help="Requested frames per second."),
+    remove: bool = typer.Option(False, "--remove", help="Remove this camera instead of adding it."),
+) -> None:
+    """Attach (or remove) an OpenCV camera on the follower; `teleop` shows it automatically."""
+    cfg = _load()
+    foll = _require(cfg, "follower")  # cameras live on the follower robot
+    cams = foll.get("cameras", {})
+    if remove:
+        cams.pop(name, None)
+    else:
+        cams[name] = {"type": "opencv", "index_or_path": index, "width": width, "height": height, "fps": fps}
+    foll["cameras"] = cams
+    _save(cfg)
+    typer.secho(f"follower cameras: {foll['cameras'] or '(none)'}", fg="green")
+
+
+@app.command()
+def check(role: Role) -> None:
+    """Per-motor diagnostic (raw position, homing offset, reachability) on the saved port."""
+    info = _require(_load(), role.value)
+    motors = {n: Motor(i, "sts3215", MotorNormMode.RANGE_M100_100) for n, i in MOTOR_IDS.items()}
+    bus = FeetechMotorsBus(port=info["port"], motors=motors)
+    bus.connect(handshake=False)  # don't abort if a motor is missing; report per-motor below
+    try:
+        typer.echo(f"{role.value} @ {info['port']}")
+        typer.echo(
+            f"{'motor':14s} {'id':>2s} {'raw_pos':>8s} {'homing_off':>11s} {'true_pos':>9s} {'calib_off':>10s}"
+        )
+        bad: list[str] = []
+        missing: list[str] = []
+        stale: list[str] = []
+        for name in motors:
+            try:
+                pos = bus.read("Present_Position", name, normalize=False, num_retry=2)
+                off = bus.read("Homing_Offset", name, normalize=False, num_retry=2)
+            except Exception:
+                typer.secho(f"{name:14s} {motors[name].id:>2d} {'NO RESPONSE':>45s}", fg="red")
+                missing.append(name)
+                continue
+            actual = pos + off
+            needed = actual - HALF_TURN
+            out = abs(needed) > MAX_OFFSET
+            flag = "  <-- OUT OF RANGE" if out else ""
+            typer.echo(
+                f"{name:14s} {motors[name].id:>2d} {pos:>8d} {off:>11d} {actual:>9d} {needed:>10d}{flag}"
+            )
+            if out:
+                bad.append(name)
+            if off != 0:
+                stale.append(name)
+    finally:
+        bus.disconnect()
+
+    typer.echo("")
+    if missing:
+        typer.secho(
+            f"Not responding: {', '.join(missing)} — check the daisy-chain cable/power to those", fg="red"
+        )
+        typer.secho("motors, and that their IDs were assigned (pixi run lerobot-setup-motors ...).", fg="red")
+    if stale:
+        typer.echo(f"Stale Homing_Offset (≠0) on: {', '.join(stale)} — leftover from a previous calibration;")
+        typer.echo("lerobot-calibrate resets these before reading, so it is normally fine.")
+    if bad:
+        typer.secho(
+            f"Out-of-range joints: {', '.join(bad)} — move them toward centre (true_pos≈2047),", fg="yellow"
+        )
+        typer.secho(
+            "then re-run calibration. If a joint can't reach centre, its horn is mounted off-centre.",
+            fg="yellow",
+        )
+    if not missing and not bad:
+        typer.secho("All motors responded and are within range; calibration should succeed.", fg="green")
+
+
+@app.command("setup-motors", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def setup_motors(
+    ctx: typer.Context,
+    role: Role,
+    motor: str = typer.Option(
+        None,
+        "--motor",
+        help="Assign only these motor(s) by name or id, e.g. 'shoulder_lift', '2', or '2,4'. "
+        "Omit to set all six (the standard lerobot flow).",
+    ),
+) -> None:
+    """Assign Feetech motor IDs for ROLE using the saved port.
+
+    Without --motor: runs the standard lerobot-setup-motors (all six, one at a time).
+    With --motor: re-assigns just the given motor(s) — connect ONLY that motor to the bus
+    when prompted (same per-motor primitive the full flow uses, exposed for fixing one joint).
+    """
+    info = _require(_load(), role.value)
+    if not motor:
+        p = ROLE_META[role.value]["prefix"]
+        cmd = [
+            "lerobot-setup-motors",
+            f"--{p}.type={info['type']}",
+            f"--{p}.port={info['port']}",
+            *ctx.args,
+        ]
+        _run(cmd)
+
+    # Single/selected-motor path via the bus primitive.
+    from lerobot.motors import Motor, MotorNormMode
+    from lerobot.motors.feetech import FeetechMotorsBus
+
+    id_to_name = {i: n for n, i in MOTOR_IDS.items()}
+    names = []
+    for tok in motor.split(","):
+        tok = tok.strip()
+        if tok.isdigit():
+            mid = int(tok)
+            if mid not in id_to_name:
+                raise typer.BadParameter(f"id {mid} is not 1-6 (motors: {MOTOR_IDS})")
+            names.append(id_to_name[mid])
+        elif tok in MOTOR_IDS:
+            names.append(tok)
+        else:
+            raise typer.BadParameter(f"unknown motor '{tok}'. Use a name {list(MOTOR_IDS)} or id 1-6.")
+
+    motors = {n: Motor(i, "sts3215", MotorNormMode.RANGE_M100_100) for n, i in MOTOR_IDS.items()}
+    bus = FeetechMotorsBus(port=info["port"], motors=motors)
+    try:
+        for name in names:
+            typer.secho(
+                f"Connect the controller board to the '{name}' (id {MOTOR_IDS[name]}) motor ONLY, then press Enter...",
+                fg="yellow",
+            )
+            input()
+            bus.setup_motor(name)
+            typer.secho(f"'{name}' id set to {MOTOR_IDS[name]}", fg="green")
+    finally:
+        # Only one motor is physically on the bus, so the default disconnect (which
+        # disables torque on ALL six mapped motors) would fail on the absent ids.
+        if bus.is_connected:
+            bus.disconnect(disable_torque=False)
+    raise typer.Exit(0)
+
+
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def calibrate(ctx: typer.Context, role: Role) -> None:
+    """Run lerobot-calibrate for ROLE using the saved port/id. Extra flags are forwarded."""
+    info = _require(_load(), role.value)
+    p = ROLE_META[role.value]["prefix"]
+    cmd = [
+        "lerobot-calibrate",
+        f"--{p}.type={info['type']}",
+        f"--{p}.port={info['port']}",
+        f"--{p}.id={info['id']}",
+        *ctx.args,
+    ]
+    typer.secho("$ " + " ".join(cmd), fg="blue")
+    raise typer.Exit(subprocess.run(cmd).returncode)
+
+
+def _rerun_pids() -> set[int]:
+    """PIDs of running Rerun viewer processes."""
+    try:
+        import psutil
+    except Exception:
+        return set()
+    pids = set()
+    for p in psutil.process_iter(["name"]):
+        try:
+            if "rerun" in (p.info["name"] or "").lower():
+                pids.add(p.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return pids
+
+
+def _kill_new_rerun(before: set[int]) -> None:
+    """Close Rerun viewers that appeared since `before` (lerobot's `rr.spawn` leaves them running)."""
+    try:
+        import psutil
+    except Exception:
+        return
+    victims = []
+    for p in psutil.process_iter(["name"]):
+        try:
+            if p.pid not in before and "rerun" in (p.info["name"] or "").lower():
+                victims.append(p)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    if not victims:
+        return
+    for p in victims:
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+            p.terminate()
+    _, alive = psutil.wait_procs(victims, timeout=3)
+    for p in alive:
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+            p.kill()
+    typer.secho(f"(closed {len(victims)} leftover Rerun viewer process(es))", fg="yellow")
+
+
+def _run(cmd: list[str], cleanup_rerun: bool = False) -> None:
+    typer.secho("$ " + " ".join(cmd), fg="blue")
+    before = _rerun_pids() if cleanup_rerun else set()
+    rc = subprocess.run(cmd).returncode
+    if cleanup_rerun:
+        _kill_new_rerun(before)
+    raise typer.Exit(rc)
+
+
+def _arm_flags(prefix: str, info: dict) -> list[str]:
+    return [
+        f"--{prefix}.type={info['type']}",
+        f"--{prefix}.port={info['port']}",
+        f"--{prefix}.id={info['id']}",
+    ]
+
+
+@app.command(context_settings=PASSTHROUGH)
+def teleop(
+    ctx: typer.Context,
+    max_rel: float = typer.Option(
+        None,
+        "--max-rel",
+        help="Safety cap: max degrees a follower joint may move per control step (e.g. 5). Makes the initial sync ramp up gently instead of snapping.",
+    ),
+    display: bool = typer.Option(
+        True, "--display/--no-display", help="Show camera & joint data in the Rerun viewer."
+    ),
+    keep_viewer: bool = typer.Option(
+        False,
+        "--keep-viewer",
+        help="Leave the Rerun viewer open after exit (default: close the viewer this run spawned).",
+    ),
+    cameras: bool = typer.Option(
+        True, "--cameras/--no-cameras", help="Attach the follower's registered cameras."
+    ),
+) -> None:
+    """Run lerobot-teleoperate using both saved arms (+ registered cameras). Extra flags are forwarded."""
+    cfg = _load()
+    lead = _require(cfg, "leader")
+    foll = _require(cfg, "follower")
+    cmd = ["lerobot-teleoperate", *_arm_flags("robot", foll), *_arm_flags("teleop", lead)]
+    extra = list(ctx.args)
+    _add_cameras_display(cmd, foll, extra, cameras, display)
+    _add_max_rel(cmd, extra, max_rel)
+    _run(cmd + extra, cleanup_rerun=display and not keep_viewer)
+
+
+@app.command(context_settings=PASSTHROUGH)
+def record(
+    ctx: typer.Context,
+    task: str = typer.Option(
+        ..., "--task", help="Natural-language task description stored with the dataset."
+    ),
+    repo_id: str = typer.Option(
+        ..., "--repo-id", help="Dataset id: a bare 'name' (prefixed with your HF user) or 'user/name'."
+    ),
+    episodes: int = typer.Option(5, "--episodes", help="Number of episodes to record."),
+    episode_time: float = typer.Option(
+        None,
+        "--episode-time",
+        help="Seconds per episode before it auto-stops (lerobot default 60). Right-arrow ends one early.",
+    ),
+    reset_time: float = typer.Option(
+        None, "--reset-time", help="Seconds to reset the scene between episodes (lerobot default 60)."
+    ),
+    fps: int = typer.Option(30, "--fps"),
+    push: bool = typer.Option(
+        False, "--push/--no-push", help="Upload the dataset to the Hugging Face Hub (needs `hf auth login`)."
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Delete an existing local dataset with this id before recording (lerobot won't overwrite on its own).",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Append to an existing dataset; --episodes then means N *additional* episodes (e.g. after `drop`).",
+    ),
+    max_rel: float = typer.Option(
+        None, "--max-rel", help="Safety cap: max degrees a follower joint may move per control step (e.g. 5)."
+    ),
+    display: bool = typer.Option(True, "--display/--no-display"),
+    keep_viewer: bool = typer.Option(
+        False, "--keep-viewer", help="Leave the Rerun viewer open after exit (default: close it)."
+    ),
+    cameras: bool = typer.Option(True, "--cameras/--no-cameras"),
+) -> None:
+    """Record a teleoperated dataset (lerobot-record) using both saved arms + cameras. Extra flags forwarded.
+
+    Recording starts automatically; control it from the (focused) terminal with the arrow keys:
+    Right=stop the current episode and continue, Left=re-record it, Esc=stop the whole session.
+    """
+    if overwrite and resume:
+        raise typer.BadParameter("--overwrite and --resume are mutually exclusive.")
+    cfg = _load()
+    lead = _require(cfg, "leader")
+    foll = _require(cfg, "follower")
+    repo = _resolve_repo(repo_id, for_creation=not resume)
+    _maybe_overwrite(repo, overwrite)
+    cmd = [
+        "lerobot-record",
+        *_arm_flags("robot", foll),
+        *_arm_flags("teleop", lead),
+        f"--dataset.repo_id={repo}",
+        f"--dataset.num_episodes={episodes}",
+        f"--dataset.single_task={task}",
+        f"--dataset.fps={fps}",
+        f"--dataset.push_to_hub={'true' if push else 'false'}",
+    ]
+    if resume:
+        cmd.append("--resume=true")
+    if episode_time is not None:
+        cmd.append(f"--dataset.episode_time_s={episode_time}")
+    if reset_time is not None:
+        cmd.append(f"--dataset.reset_time_s={reset_time}")
+    extra = list(ctx.args)
+    _add_cameras_display(cmd, foll, extra, cameras, display)
+    _add_max_rel(cmd, extra, max_rel)
+    _run(cmd + extra, cleanup_rerun=display and not keep_viewer)
+
+
+@app.command(context_settings=PASSTHROUGH)
+def train(
+    ctx: typer.Context,
+    repo_id: str = typer.Option(
+        None, "--repo-id", help="Dataset id ('name' → prefixed with your HF user). Required unless --resume."
+    ),
+    policy: str = typer.Option("act", "--policy", help="Policy type: act, diffusion, smolvla, pi0, ..."),
+    device: str = typer.Option(None, "--device", help="cuda / mps / cpu (auto-detected if omitted)."),
+    job_name: str = typer.Option(None, "--job-name", help="Defaults to <policy>_<dataset>."),
+    output_dir: str = typer.Option(None, "--output-dir", help="Defaults to outputs/train/<job-name>."),
+    steps: int = typer.Option(
+        None, "--steps", help="Total number of training steps (lerobot's default depends on the policy)."
+    ),
+    batch_size: int = typer.Option(None, "--batch-size", help="Training batch size."),
+    save_freq: int = typer.Option(None, "--save-freq", help="Save a checkpoint every N steps."),
+    wandb: bool = typer.Option(
+        False, "--wandb/--no-wandb", help="Log to Weights & Biases (needs `wandb login`)."
+    ),
+    push_repo_id: str = typer.Option(
+        None, "--push-repo-id", help="Hub repo to push the trained policy (omit to keep it local)."
+    ),
+    resume: str = typer.Option(
+        None, "--resume", help="Resume from a checkpoint dir or its train_config.json."
+    ),
+) -> None:
+    """Train a policy (lerobot-train). Extra flags are forwarded."""
+    if resume:
+        cfg_path = (
+            resume
+            if resume.endswith(".json")
+            else str(Path(resume) / "pretrained_model" / "train_config.json")
+        )
+        _run(["lerobot-train", f"--config_path={cfg_path}", "--resume=true", *ctx.args])
+    if not repo_id:
+        raise typer.BadParameter("--repo-id is required (unless you pass --resume).")
+    repo = _resolve_repo(repo_id)
+    job = job_name or f"{policy}_{repo.split('/')[-1]}"
+    cmd = [
+        "lerobot-train",
+        f"--dataset.repo_id={repo}",
+        f"--policy.type={policy}",
+        f"--output_dir={output_dir or f'outputs/train/{job}'}",
+        f"--job_name={job}",
+        f"--policy.device={device or _auto_device()}",
+        f"--wandb.enable={'true' if wandb else 'false'}",
+    ]
+    if steps is not None:
+        cmd.append(f"--steps={steps}")
+    if batch_size is not None:
+        cmd.append(f"--batch_size={batch_size}")
+    if save_freq is not None:
+        cmd.append(f"--save_freq={save_freq}")
+    if not any(a.startswith("--dataset.video_backend") for a in ctx.args):
+        backend = _safe_video_backend()
+        if backend:
+            cmd.append(f"--dataset.video_backend={backend}")
+    cmd.append(
+        f"--policy.repo_id={_resolve_repo(push_repo_id, for_creation=True)}"
+        if push_repo_id
+        else "--policy.push_to_hub=false"
+    )
+    _run(cmd + list(ctx.args))
+
+
+@app.command("eval", context_settings=PASSTHROUGH)
+def evaluate(
+    ctx: typer.Context,
+    policy: str = typer.Option(
+        ..., "--policy", help="Trained policy: a local checkpoint dir or a Hub repo id."
+    ),
+    task: str = typer.Option(..., "--task", help="Natural-language task description."),
+    repo_id: str = typer.Option(
+        ..., "--repo-id", help="Eval dataset id; should start with 'eval_'. 'name' → prefixed with HF user."
+    ),
+    episodes: int = typer.Option(10, "--episodes"),
+    fps: int = typer.Option(30, "--fps"),
+    push: bool = typer.Option(False, "--push/--no-push"),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Delete an existing local eval dataset with this id first."
+    ),
+    max_rel: float = typer.Option(
+        None,
+        "--max-rel",
+        help="Safety cap: max degrees the follower may move per step (e.g. 5). Recommended for autonomous eval to limit sudden motion.",
+    ),
+    display: bool = typer.Option(True, "--display/--no-display"),
+    keep_viewer: bool = typer.Option(
+        False, "--keep-viewer", help="Leave the Rerun viewer open after exit (default: close it)."
+    ),
+    cameras: bool = typer.Option(True, "--cameras/--no-cameras"),
+) -> None:
+    """Run a trained policy on the follower and record eval episodes (lerobot-record + --policy.path)."""
+    cfg = _load()
+    foll = _require(cfg, "follower")  # the policy drives the follower; no leader needed
+    repo = _resolve_repo(repo_id, for_creation=True)
+    name = repo.split("/")[-1]
+    if not name.startswith("eval_"):
+        raise typer.BadParameter(
+            f"lerobot requires eval dataset names to start with 'eval_' (you gave '{name}'). "
+            f"Use e.g. --repo-id eval_test."
+        )
+    _maybe_overwrite(repo, overwrite)
+    cmd = [
+        "lerobot-record",
+        *_arm_flags("robot", foll),
+        f"--policy.path={_resolve_policy(policy)}",
+        f"--dataset.repo_id={repo}",
+        f"--dataset.num_episodes={episodes}",
+        f"--dataset.single_task={task}",
+        f"--dataset.fps={fps}",
+        f"--dataset.push_to_hub={'true' if push else 'false'}",
+    ]
+    extra = list(ctx.args)
+    _add_cameras_display(cmd, foll, extra, cameras, display)
+    _add_max_rel(cmd, extra, max_rel)
+    _run(cmd + extra, cleanup_rerun=display and not keep_viewer)
+
+
+@app.command(context_settings=PASSTHROUGH)
+def replay(
+    ctx: typer.Context,
+    repo_id: str = typer.Option(..., "--repo-id", help="Dataset id ('name' → prefixed with your HF user)."),
+    episode: int = typer.Option(0, "--episode", help="Episode index to replay on the follower."),
+) -> None:
+    """Replay one recorded episode on the follower (lerobot-replay). Extra flags are forwarded."""
+    cfg = _load()
+    foll = _require(cfg, "follower")  # replay drives the follower; no leader/cameras needed
+    cmd = [
+        "lerobot-replay",
+        *_arm_flags("robot", foll),
+        f"--dataset.repo_id={_resolve_repo(repo_id)}",
+        f"--dataset.episode={episode}",
+    ]
+    _run(cmd + list(ctx.args))
+
+
+@app.command(context_settings=PASSTHROUGH)
+def viz(
+    ctx: typer.Context,
+    repo_id: str = typer.Option(..., "--repo-id", help="Dataset id ('name' → prefixed with your HF user)."),
+    episode: int = typer.Option(0, "--episode", help="Episode index to visualize."),
+) -> None:
+    """Visualize a recorded episode (frames, states, actions) in a Rerun viewer (lerobot-dataset-viz)."""
+    cmd = ["lerobot-dataset-viz", "--repo-id", _resolve_repo(repo_id), "--episode-index", str(episode)]
+    _run(cmd + list(ctx.args))
+
+
+@app.command(context_settings=PASSTHROUGH)
+def drop(
+    ctx: typer.Context,
+    repo_id: str = typer.Option(..., "--repo-id", help="Dataset id ('name' → prefixed with your HF user)."),
+    episodes: str = typer.Option(
+        ..., "--episodes", help="Comma-separated episode indices to delete, e.g. 0,2,5"
+    ),
+) -> None:
+    """Delete bad episodes from a local dataset in place (lerobot-edit-dataset; a backup is created).
+
+    Remaining episodes are re-indexed from 0, so re-check indices with `viz` before dropping again.
+    Re-record the dropped count afterwards with: record --resume --episodes N.
+    """
+    repo = _resolve_repo(repo_id)
+    try:
+        idx = sorted({int(e) for e in episodes.split(",")})
+    except ValueError:
+        raise typer.BadParameter(f"--episodes must be comma-separated integers, got '{episodes}'") from None
+    cmd = [
+        "lerobot-edit-dataset",
+        f"--repo_id={repo}",
+        "--operation.type=delete_episodes",
+        f"--operation.episode_indices=[{', '.join(map(str, idx))}]",
+    ]
+    _run(cmd + list(ctx.args))
+
+
+@app.command("policy-test")
+def policy_test(
+    policy: str = typer.Option(..., "--policy", help="Trained policy: a checkpoint dir or a Hub repo id."),
+    repo_id: str = typer.Option(
+        ..., "--repo-id", help="Dataset whose recorded frames are used as observations."
+    ),
+    device: str = typer.Option(None, "--device", help="cuda / mps / cpu (auto-detected if omitted)."),
+    steps: int = typer.Option(20, "--steps", help="Number of inference steps to run."),
+    episode: int = typer.Option(0, "--episode", help="Episode to take frames from."),
+) -> None:
+    """Offline inference smoke test: run the trained policy on recorded dataset frames — no robot needed.
+
+    Exercises the same pipeline as `eval` (policy load, pre/post-processors, video decode,
+    predict_action) and reports latency plus deviation from the recorded actions.
+    """
+    import numpy as np
+    import torch
+    from lerobot.common.control_utils import predict_action
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.policies.factory import make_policy, make_pre_post_processors
+    from lerobot.utils.device_utils import get_safe_torch_device
+
+    dev = device or _auto_device()
+    pol_path = _resolve_policy(policy)
+    repo = _resolve_repo(repo_id)
+
+    typer.secho(f"Loading dataset {repo} (downloads from the Hub if not cached locally)...", fg="blue")
+    dataset = LeRobotDataset(repo, video_backend=_safe_video_backend())
+    ep_from = dataset.meta.episodes[episode]["dataset_from_index"]
+    ep_to = dataset.meta.episodes[episode]["dataset_to_index"]
+
+    typer.secho(f"Loading policy from {pol_path} on {dev}...", fg="blue")
+    cfg = PreTrainedConfig.from_pretrained(pol_path)
+    cfg.pretrained_path = pol_path
+    cfg.device = dev
+    pol = make_policy(cfg, ds_meta=dataset.meta)
+    pre, post = make_pre_post_processors(
+        policy_cfg=cfg,
+        pretrained_path=pol_path,
+        dataset_stats=dataset.meta.stats,
+        preprocessor_overrides={"device_processor": {"device": dev}},
+    )
+    for p in (pol, pre, post):
+        if hasattr(p, "reset"):
+            p.reset()
+
+    torch_device = get_safe_torch_device(dev)
+    diffs, times = [], []
+    for i in range(steps):
+        frame = dataset[ep_from + i % max(ep_to - ep_from, 1)]
+        # Rebuild the dataset-format observation that record_loop feeds to predict_action.
+        obs = {}
+        for key in dataset.meta.features:
+            if not key.startswith("observation."):
+                continue
+            t = frame[key]
+            if "image" in key:  # (C,H,W) float [0,1] -> (H,W,C) uint8, as a camera would produce
+                obs[key] = (t.permute(1, 2, 0) * 255).to(torch.uint8).numpy()
+            else:
+                obs[key] = t.numpy().astype(np.float32)
+        t0 = time.perf_counter()
+        action = predict_action(
+            observation=obs,
+            policy=pol,
+            device=torch_device,
+            preprocessor=pre,
+            postprocessor=post,
+            use_amp=pol.config.use_amp,
+            task=dataset.meta.tasks.index[0] if len(dataset.meta.tasks) else "",
+            robot_type=dataset.meta.robot_type,
+        )
+        times.append(time.perf_counter() - t0)
+        action = action.cpu().numpy() if hasattr(action, "cpu") else np.asarray(action)
+        diffs.append(np.abs(action - frame["action"].numpy()).mean())
+
+    typer.secho(
+        f"OK: {steps} inference steps on {dev} | "
+        f"first {times[0] * 1e3:.0f} ms, avg {np.mean(times[1:]) * 1e3 if len(times) > 1 else times[0] * 1e3:.1f} ms "
+        f"(~{1.0 / np.mean(times[1:]) if len(times) > 1 else 1.0 / times[0]:.0f} Hz) | "
+        f"mean |action - recorded| = {np.mean(diffs):.2f} deg",
+        fg="green",
+    )
+
+
+@app.command()
+def upload(
+    repo_id: str = typer.Option(
+        ..., "--repo-id", help="Local dataset id to upload ('name' → prefixed with your HF user)."
+    ),
+    private: bool = typer.Option(False, "--private", help="Create the Hub dataset as private."),
+    tags: str = typer.Option(None, "--tags", help="Comma-separated tags for the dataset card."),
+) -> None:
+    """Upload an already-recorded local dataset to the Hugging Face Hub (needs `pixi run hf-login`)."""
+    repo = _resolve_repo(repo_id)
+    root = _dataset_root(repo)
+    if not root.exists():
+        raise typer.BadParameter(
+            f"No local dataset at {root}. Record it first (without --push), or check --repo-id."
+        )
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    typer.secho(f"Uploading {repo} from {root} ...", fg="blue")
+    try:
+        ds = LeRobotDataset(repo, root=root)
+        ds.push_to_hub(private=private, tags=[t.strip() for t in tags.split(",")] if tags else None)
+    except Exception as exc:  # surface a clean hint instead of a raw traceback
+        raise typer.BadParameter(
+            f"Upload failed ({type(exc).__name__}: {exc}). Are you logged in? Run: pixi run hf-login"
+        ) from None
+    typer.secho(f"Uploaded → https://huggingface.co/datasets/{repo}", fg="green")
+
+
+if __name__ == "__main__":
+    app()
