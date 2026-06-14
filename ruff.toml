@@ -1,4 +1,4 @@
-# mentaimayo 自身のコード用設定。submodule の lerobot は独自の ruff 設定を持つため除外。
+# reactive-vla 自身のコード用設定。submodule の lerobot は独自の ruff 設定を持つため除外。
 target-version = "py312"
 line-length = 110
 extend-exclude = ["third_party"]
@@ -10,7 +10,7 @@ select = ["E", "W", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"] # 行長は formatter に任せる
 
 [lint.isort]
-known-first-party = ["mentaimayo"]
+known-first-party = ["reactive_vla"]
 
 [format]
 quote-style = "double"

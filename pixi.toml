@@ -1,7 +1,7 @@
 [workspace]
 authors = ["Masafumi Higashi <higashi-masafumi507@g.ecc.u-tokyo.ac.jp>"]
 channels = ["conda-forge"]
-name = "mentaimayo"
+name = "reactive-vla"
 platforms = ["osx-arm64"]
 version = "0.1.0"
 
