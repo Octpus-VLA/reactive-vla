@@ -1,7 +1,7 @@
 # lerobot を editable 管理する構成
 
 ## 目的
-lerobot 本体を直接編集してカスタムモデル（policy）を追加し、本リポジトリ（mentaimayo）から呼び出せるようにする。
+lerobot 本体を直接編集してカスタムモデル（policy）を追加し、本リポジトリ（reactive-vla）から呼び出せるようにする。
 
 ## 決定事項（要件）
 
@@ -39,7 +39,7 @@ pixi install
 ### 4. clone 時の注意
 他環境で clone する際は submodule も取得：
 ```bash
-git clone --recurse-submodules <mentaimayo-url>
+git clone --recurse-submodules <reactive-vla-url>
 # もしくは clone 後に
 git submodule update --init --recursive
 ```
@@ -52,7 +52,7 @@ lerobot は `draccus.ChoiceRegistry` でポリシー config を登録し、`src/
    - `configuration_<your_model>.py`: `PreTrainedConfig` を継承し `@PreTrainedConfig.register_subclass("<your_model>")` を付与
    - `modeling_<your_model>.py`: `PreTrainedPolicy` を継承
 2. `factory.py` の `get_policy_class` / `get_policy_config_class` に分岐を追加
-3. 編集は `third_party/lerobot` 内の commit → fork に push。mentaimayo 側は submodule の SHA を bump して commit
+3. 編集は `third_party/lerobot` 内の commit → fork に push。reactive-vla 側は submodule の SHA を bump して commit
 
 ## upstream 追従
 ```bash
