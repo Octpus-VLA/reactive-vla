@@ -9,6 +9,32 @@ version = "0.1.0"
 fmt = "ruff format ."
 lint = "ruff check ."
 fix = "ruff check --fix . && ruff format ."
+verify = { cmd = "python -c \"import lerobot, scservo_sdk; print('lerobot', lerobot.__version__, '| feetech OK')\"" }
+ffmpeg-version = "ffmpeg -version"
+find-cameras = "lerobot-find-cameras"  # list connected cameras and save a sample image
+
+# --- SO-101 arm workflow (register once by role, then no ports/ids needed) ---
+set-port = "python cli/so101.py find-port"       # usage: pixi run set-port leader | follower
+arms = "python cli/so101.py show"                # show registered arms
+check = "python cli/so101.py check"              # usage: pixi run check leader | follower
+set-camera = "python cli/so101.py set-camera"    # usage: pixi run set-camera front --index 0
+setup-motors = "python cli/so101.py setup-motors"  # usage: pixi run setup-motors leader | follower
+calibrate = "python cli/so101.py calibrate"      # usage: pixi run calibrate leader | follower
+teleop = "python cli/so101.py teleop"            # uses both saved arms; no args needed
+
+# --- Imitation-learning pipeline (record -> train -> eval) -------------------
+hf-login = "hf auth login"                           # log in before pushing datasets/policies
+record = "python cli/so101.py record"            # usage: pixi run record --task "..." --repo-id name
+replay = "python cli/so101.py replay"            # usage: pixi run replay --repo-id name --episode 0
+viz = "python cli/so101.py viz"                  # usage: pixi run viz --repo-id name --episode 0
+drop = "python cli/so101.py drop"                # usage: pixi run drop --repo-id name --episodes 0,2
+upload = "python cli/so101.py upload"            # usage: pixi run upload --repo-id name  (existing local dataset)
+train = "python cli/so101.py train"              # usage: pixi run train --repo-id name [--policy act]
+eval = "python cli/so101.py eval"                # usage: pixi run eval --policy <ckpt> --task "..." --repo-id eval_name
+policy-test = "python cli/so101.py policy-test"  # offline inference smoke test (no robot needed)
+
+# Low-level fallback if you prefer raw lerobot port detection:
+find-port = "lerobot-find-port"
 
 [dependencies]
 python = "3.12.*"
@@ -16,6 +42,9 @@ pip = "*"
 setuptools = ">=71.0.0,<81.0.0"
 packaging = ">=24.2,<26.0"
 ruff = "*"
+pyserial = ">=3.5,<4"
+psutil = ">=7.2.2,<8"
 
 [pypi-dependencies]
-lerobot = { path = "third_party/lerobot", editable = true }
+lerobot = { path = "third_party/lerobot", editable = true, extras = ["feetech"] }
+torchcodec = ">=0.11.1, <0.12"
