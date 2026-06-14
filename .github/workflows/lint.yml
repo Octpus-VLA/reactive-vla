@@ -1,0 +1,30 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一ブランチの古い実行はキャンセル
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      # submodule(lerobot) は ruff.toml で除外しているため取得不要
+      - uses: actions/checkout@v4
+
+      - name: Ruff lint
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.15.17"
+          args: "check ."
+
+      - name: Ruff format check
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.15.17"
+          args: "format --check ."
