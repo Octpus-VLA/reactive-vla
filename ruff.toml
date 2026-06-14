@@ -1,0 +1,17 @@
+# mentaimayo 自身のコード用設定。submodule の lerobot は独自の ruff 設定を持つため除外。
+target-version = "py312"
+line-length = 110
+extend-exclude = ["third_party"]
+
+[lint]
+# E,W: pycodestyle / F: pyflakes / I: isort / UP: pyupgrade
+# B: bugbear / SIM: simplify  — 最低限の品質維持に絞る
+select = ["E", "W", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"] # 行長は formatter に任せる
+
+[lint.isort]
+known-first-party = ["mentaimayo"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

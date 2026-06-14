@@ -6,12 +6,16 @@ platforms = ["osx-arm64"]
 version = "0.1.0"
 
 [tasks]
+fmt = "ruff format ."
+lint = "ruff check ."
+fix = "ruff check --fix . && ruff format ."
 
 [dependencies]
 python = "3.12.*"
 pip = "*"
 setuptools = ">=71.0.0,<81.0.0"
 packaging = ">=24.2,<26.0"
+ruff = "*"
 
 [pypi-dependencies]
 lerobot = { path = "third_party/lerobot", editable = true }
