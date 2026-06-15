@@ -2,7 +2,7 @@
 authors = ["Masafumi Higashi <higashi-masafumi507@g.ecc.u-tokyo.ac.jp>"]
 channels = ["conda-forge"]
 name = "reactive-vla"
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
 version = "0.1.0"
 
 [tasks]
