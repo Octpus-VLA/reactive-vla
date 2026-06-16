@@ -646,12 +646,8 @@ def train(
     use_wandb: bool = typer.Option(
         False, "--wandb/--no-wandb", help="Log to Weights & Biases (needs `pixi run wandb-login`)."
     ),
-    wandb_project: str = typer.Option(
-        None, "--wandb-project", help="W&B project name (default: 'lerobot')."
-    ),
-    wandb_entity: str = typer.Option(
-        None, "--wandb-entity", help="W&B entity (team or user) to log under."
-    ),
+    wandb_project: str = typer.Option(None, "--wandb-project", help="W&B project name (default: 'lerobot')."),
+    wandb_entity: str = typer.Option(None, "--wandb-entity", help="W&B entity (team or user) to log under."),
     push_repo_id: str = typer.Option(
         None,
         "--push-repo-id",
