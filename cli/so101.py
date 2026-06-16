@@ -15,6 +15,7 @@ command, e.g. `pixi run teleop --robot.cameras='{...}' --display-data=true`.
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import shutil
@@ -683,7 +684,8 @@ def train(
     repo = _resolve_repo(repo_id)
     # Derive a readable job name from policy name or the last segment of the model path.
     policy_slug = (policy or policy_path.rstrip("/").split("/")[-1]).replace(".", "_")
-    job = job_name or f"{policy_slug}_{repo.split('/')[-1]}"
+    ts = datetime.datetime.now().strftime("%m%d_%H%M")
+    job = job_name or f"{policy_slug}_{repo.split('/')[-1]}_{ts}"
     cmd = [
         "lerobot-train",
         f"--dataset.repo_id={repo}",
