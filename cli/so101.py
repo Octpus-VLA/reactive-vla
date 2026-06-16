@@ -682,14 +682,16 @@ def train(
     if not policy and not policy_path:
         raise typer.BadParameter("One of --policy or --policy-path is required.")
     repo = _resolve_repo(repo_id)
-    # Derive a readable job name from policy name or the last segment of the model path.
     policy_slug = (policy or policy_path.rstrip("/").split("/")[-1]).replace(".", "_")
+    dataset_slug = repo.split("/")[-1]
     ts = datetime.datetime.now().strftime("%m%d_%H%M")
-    job = job_name or f"{policy_slug}_{repo.split('/')[-1]}_{ts}"
+    # job_name is flat (used by W&B); output_dir is hierarchical: policy/dataset/timestamp-or-job
+    job = job_name or f"{policy_slug}_{dataset_slug}_{ts}"
+    final_output_dir = output_dir or f"outputs/train/{policy_slug}/{dataset_slug}/{job_name or ts}"
     cmd = [
         "lerobot-train",
         f"--dataset.repo_id={repo}",
-        f"--output_dir={output_dir or f'outputs/train/{job}'}",
+        f"--output_dir={final_output_dir}",
         f"--job_name={job}",
         f"--policy.device={device or _auto_device()}",
         f"--wandb.enable={'true' if use_wandb else 'false'}",
