@@ -622,7 +622,18 @@ def train(
     repo_id: str = typer.Option(
         None, "--repo-id", help="Dataset id ('name' → prefixed with your HF user). Required unless --resume."
     ),
-    policy: str = typer.Option("act", "--policy", help="Policy type: act, diffusion, smolvla, pi0, ..."),
+    policy: str = typer.Option(
+        None,
+        "--policy",
+        help="Policy architecture for training from scratch: act, diffusion, smolvla, pi0, ... "
+        "Mutually exclusive with --policy-path.",
+    ),
+    policy_path: str = typer.Option(
+        None,
+        "--policy-path",
+        help="Pretrained model to fine-tune: a local checkpoint dir or a Hub model id "
+        "(e.g. 'lerobot/smolvla_base'). Mutually exclusive with --policy.",
+    ),
     device: str = typer.Option(None, "--device", help="cuda / mps / cpu (auto-detected if omitted)."),
     job_name: str = typer.Option(None, "--job-name", help="Defaults to <policy>_<dataset>."),
     output_dir: str = typer.Option(None, "--output-dir", help="Defaults to outputs/train/<job-name>."),
@@ -631,17 +642,33 @@ def train(
     ),
     batch_size: int = typer.Option(None, "--batch-size", help="Training batch size."),
     save_freq: int = typer.Option(None, "--save-freq", help="Save a checkpoint every N steps."),
-    wandb: bool = typer.Option(
-        False, "--wandb/--no-wandb", help="Log to Weights & Biases (needs `wandb login`)."
+    use_wandb: bool = typer.Option(
+        False, "--wandb/--no-wandb", help="Log to Weights & Biases (needs `pixi run wandb-login`)."
+    ),
+    wandb_project: str = typer.Option(
+        None, "--wandb-project", help="W&B project name (default: 'lerobot')."
+    ),
+    wandb_entity: str = typer.Option(
+        None, "--wandb-entity", help="W&B entity (team or user) to log under."
     ),
     push_repo_id: str = typer.Option(
-        None, "--push-repo-id", help="Hub repo to push the trained policy (omit to keep it local)."
+        None,
+        "--push-repo-id",
+        help="Hub model repo to push the trained policy after training ('name' → prefixed with HF user). "
+        "Omit to keep it local only.",
     ),
     resume: str = typer.Option(
         None, "--resume", help="Resume from a checkpoint dir or its train_config.json."
     ),
 ) -> None:
-    """Train a policy (lerobot-train). Extra flags are forwarded."""
+    """Train a policy (lerobot-train). Extra flags are forwarded.
+
+    Two modes:
+      --policy act            Train from scratch with that architecture.
+      --policy-path user/repo Fine-tune from a pretrained Hub model or local checkpoint.
+    """
+    if policy and policy_path:
+        raise typer.BadParameter("--policy and --policy-path are mutually exclusive.")
     if resume:
         cfg_path = (
             resume
@@ -651,17 +678,28 @@ def train(
         _run(["lerobot-train", f"--config_path={cfg_path}", "--resume=true", *ctx.args])
     if not repo_id:
         raise typer.BadParameter("--repo-id is required (unless you pass --resume).")
+    if not policy and not policy_path:
+        raise typer.BadParameter("One of --policy or --policy-path is required.")
     repo = _resolve_repo(repo_id)
-    job = job_name or f"{policy}_{repo.split('/')[-1]}"
+    # Derive a readable job name from policy name or the last segment of the model path.
+    policy_slug = (policy or policy_path.rstrip("/").split("/")[-1]).replace(".", "_")
+    job = job_name or f"{policy_slug}_{repo.split('/')[-1]}"
     cmd = [
         "lerobot-train",
         f"--dataset.repo_id={repo}",
-        f"--policy.type={policy}",
         f"--output_dir={output_dir or f'outputs/train/{job}'}",
         f"--job_name={job}",
         f"--policy.device={device or _auto_device()}",
-        f"--wandb.enable={'true' if wandb else 'false'}",
+        f"--wandb.enable={'true' if use_wandb else 'false'}",
     ]
+    if policy_path:
+        cmd.append(f"--policy.path={policy_path}")
+    else:
+        cmd.append(f"--policy.type={policy}")
+    if use_wandb and wandb_project:
+        cmd.append(f"--wandb.project={wandb_project}")
+    if use_wandb and wandb_entity:
+        cmd.append(f"--wandb.entity={wandb_entity}")
     if steps is not None:
         cmd.append(f"--steps={steps}")
     if batch_size is not None:
@@ -672,11 +710,11 @@ def train(
         backend = _safe_video_backend()
         if backend:
             cmd.append(f"--dataset.video_backend={backend}")
-    cmd.append(
-        f"--policy.repo_id={_resolve_repo(push_repo_id, for_creation=True)}"
-        if push_repo_id
-        else "--policy.push_to_hub=false"
-    )
+    if push_repo_id:
+        hub_repo = _resolve_repo(push_repo_id, for_creation=True)
+        cmd += [f"--policy.repo_id={hub_repo}", "--policy.push_to_hub=true"]
+    else:
+        cmd.append("--policy.push_to_hub=false")
     _run(cmd + list(ctx.args))
 
 
@@ -901,6 +939,50 @@ def upload(
             f"Upload failed ({type(exc).__name__}: {exc}). Are you logged in? Run: pixi run hf-login"
         ) from None
     typer.secho(f"Uploaded → https://huggingface.co/datasets/{repo}", fg="green")
+
+
+@app.command("push-policy")
+def push_policy(
+    checkpoint: str = typer.Option(
+        ...,
+        "--checkpoint",
+        help="Checkpoint dir to upload (e.g. outputs/train/<job>/checkpoints/last). "
+        "The 'pretrained_model/' sub-dir is used when present.",
+    ),
+    repo_id: str = typer.Option(
+        ..., "--repo-id", help="Hub model repo id ('name' → prefixed with HF user, e.g. 'act_my_task')."
+    ),
+    private: bool = typer.Option(False, "--private", help="Create the Hub repo as private."),
+) -> None:
+    """Upload a trained policy checkpoint to the Hugging Face Hub (needs `pixi run hf-login`)."""
+    from huggingface_hub import HfApi
+
+    ckpt = Path(checkpoint)
+    pretrained = ckpt / "pretrained_model" if (ckpt / "pretrained_model").is_dir() else ckpt
+    if not pretrained.is_dir():
+        raise typer.BadParameter(
+            f"'{checkpoint}' is not a valid checkpoint directory. "
+            f"Expected a path like outputs/train/<job>/checkpoints/last "
+            f"or outputs/train/<job>/checkpoints/last/pretrained_model."
+        )
+
+    repo = _resolve_repo(repo_id, for_creation=True)
+    typer.secho(f"Uploading {pretrained} → huggingface.co/{repo} ...", fg="blue")
+    try:
+        api = HfApi()
+        api.create_repo(repo_id=repo, repo_type="model", exist_ok=True, private=private)
+        commit = api.upload_folder(
+            repo_id=repo,
+            repo_type="model",
+            folder_path=str(pretrained),
+            commit_message="Upload policy weights and config",
+            allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
+        )
+        typer.secho(f"Uploaded → {commit.commit_url}", fg="green")
+    except Exception as exc:
+        raise typer.BadParameter(
+            f"Upload failed ({type(exc).__name__}: {exc}). Are you logged in? Run: pixi run hf-login"
+        ) from None
 
 
 if __name__ == "__main__":
