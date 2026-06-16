@@ -137,3 +137,35 @@ pixi run policy-test \
 This feeds recorded dataset frames into the fine-tuned policy and reports inference latency and the deviation from the recorded actions.
 
 Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/smolvla)
+
+## Fine-tuning with pi0
+
+[`lerobot/pi0_base`](https://huggingface.co/lerobot/pi0_base) is a PaLiGemma-based ~3B parameter model. Unlike `smolvla_base`, it dynamically reads camera names from the dataset features, so `--rename_map` is not needed.
+
+> **Known issue**: Fine-tuning `lerobot/pi0_base` is currently known to hang at `Loading model from: lerobot/pi0_base` → `model.safetensors`. We are investigating this issue; running pi0 is not recommended at this time.
+
+### Run fine-tuning
+
+```bash
+pixi run train \
+  --policy-path lerobot/pi0_base \
+  --repo-id lerobot/svla_so101_pickplace \
+  --batch-size 4 \
+  --steps 200 \
+  --device cuda
+```
+
+- Use a small `--batch-size` (4–8) due to the large model size. Gradient checkpointing may be needed even on an A100 80GB — add `-- --policy.gradient_checkpointing=true` if required.
+- `--rename_map` is not needed (pi0 uses the dataset's camera names as-is).
+
+### Verify with offline inference (no robot needed)
+
+```bash
+pixi run policy-test \
+  --policy outputs/train/pi0_base/svla_so101_pickplace/<timestamp>/checkpoints/last/pretrained_model \
+  --repo-id lerobot/svla_so101_pickplace
+```
+
+## Troubleshooting
+
+Use `qstat` to check running jobs.

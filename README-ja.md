@@ -142,6 +142,8 @@ pixi run policy-test \
 
 [`lerobot/pi0_base`](https://huggingface.co/lerobot/pi0_base) は PaLiGemma ベースの〜3B パラメータモデルです。smolvla_base と異なり、カメラ名をデータセットの特徴量から動的に受け取るため `--rename_map` は不要です。
 
+> **既知の問題**: 現在、`lerobot/pi0_base` のファインチューニングは `Loading model from: lerobot/pi0_base` → `model.safetensors` のダウンロード中に処理が止まる問題が確認されています。調査中のため、現時点では pi0 の実行は推奨しません。
+
 ### ファインチューニング実行
 
 ```bash
@@ -149,7 +151,7 @@ pixi run train \
   --policy-path lerobot/pi0_base \
   --repo-id lerobot/svla_so101_pickplace \
   --batch-size 4 \
-  --steps 20000 \
+  --steps 200 \
   --device cuda
 ```
 
@@ -163,3 +165,7 @@ pixi run policy-test \
   --policy outputs/train/pi0_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
   --repo-id lerobot/svla_so101_pickplace
 ```
+
+## トラブルシューティング
+
+`qstat` で実行中のジョブを確認できます。
