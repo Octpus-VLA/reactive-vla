@@ -137,3 +137,29 @@ pixi run policy-test \
 データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレを確認できます。
 
 参考: [SmolVLAファインチューニングガイド](https://huggingface.co/docs/lerobot/en/smolvla)
+
+## pi0 でのファインチューニング
+
+[`lerobot/pi0_base`](https://huggingface.co/lerobot/pi0_base) は PaLiGemma ベースの〜3B パラメータモデルです。smolvla_base と異なり、カメラ名をデータセットの特徴量から動的に受け取るため `--rename_map` は不要です。
+
+### ファインチューニング実行
+
+```bash
+pixi run train \
+  --policy-path lerobot/pi0_base \
+  --repo-id lerobot/svla_so101_pickplace \
+  --batch-size 4 \
+  --steps 20000 \
+  --device cuda
+```
+
+- モデルが大きいため `--batch-size` は小さく（4〜8 程度）。A100 80GB でも勾配チェックポイントが必要になる場合があります。その場合は `-- --policy.gradient_checkpointing=true` を追加してください。
+- `--rename_map` は不要です（pi0 はデータセットのカメラ名をそのまま使います）。
+
+### オフライン推論で確認（ロボット不要）
+
+```bash
+pixi run policy-test \
+  --policy outputs/train/pi0_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
+  --repo-id lerobot/svla_so101_pickplace
+```
