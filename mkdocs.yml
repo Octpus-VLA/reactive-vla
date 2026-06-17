@@ -1,0 +1,78 @@
+site_name: reactive-vla
+site_description: Octpus VLA project — SO-101 imitation learning with lerobot
+site_url: https://octpus-vla.github.io/reactive-vla/
+repo_url: https://github.com/Octpus-VLA/reactive-vla
+repo_name: Octpus-VLA/reactive-vla
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: ja
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: ダークモードに切り替え
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: ライトモードに切り替え
+  features:
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search:
+      lang:
+        - ja
+        - en
+  - i18n:
+      docs_structure: suffix
+      languages:
+        - locale: ja
+          default: true
+          name: 日本語
+          build: true
+        - locale: en
+          name: English
+          build: true
+          nav_translations:
+            ホーム: Home
+            セットアップ: Setup
+            SmolVLA ファインチューニング: SmolVLA Fine-tuning
+            lerobot editable 構成: lerobot Editable Setup
+
+nav:
+  - ホーム: index.md
+  - セットアップ: setup.md
+  - SmolVLA ファインチューニング: smolvla-finetuning.md
+  - lerobot editable 構成: lerobot-editable-setup.md
