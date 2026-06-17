@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="780" viewBox="0 0 960 780" font-family="-apple-system, 'Helvetica Neue', 'Hiragino Sans', sans-serif">
+  <rect x="0" y="0" width="960" height="780" fill="#ffffff"/>
+  <text x="40" y="44" font-size="26" font-weight="700" fill="#111">RTC 非同期実行の仕組み（SmolVLA + lerobot-rollout）</text>
+
+  <!-- ============ Panel A: async loop + queue ============ -->
+  <text x="40" y="86" font-size="19" font-weight="700" fill="#1a56db">A. 2スレッド並行 ＋ キュー残量によるリプラン</text>
+
+  <!-- thread legend -->
+  <rect x="40" y="100" width="16" height="16" fill="#16a34a"/>
+  <text x="64" y="113" font-size="14" fill="#333">メインループ: 1/fps ごとに 1 action を pop → robot.send_action</text>
+  <rect x="40" y="124" width="16" height="16" fill="#9333ea"/>
+  <text x="64" y="137" font-size="14" fill="#333">RTCスレッド: qsize ≤ queue_threshold で predict_action_chunk → merge（キュー差し替え）</text>
+
+  <!-- queue graph -->
+  <!-- axes -->
+  <line x1="120" y1="180" x2="120" y2="340" stroke="#888" stroke-width="1.5"/>
+  <line x1="120" y1="340" x2="880" y2="340" stroke="#888" stroke-width="1.5"/>
+  <text x="60" y="186" font-size="13" fill="#555">qsize</text>
+  <text x="845" y="358" font-size="13" fill="#555">time</text>
+
+  <!-- reference lines: chunk_size=50 (top), threshold=30 -->
+  <line x1="120" y1="190" x2="880" y2="190" stroke="#bbb" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="884" y="194" font-size="12" fill="#777">≈ chunk_size (50)</text>
+  <line x1="120" y1="280" x2="880" y2="280" stroke="#e11d48" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <text x="884" y="284" font-size="12" fill="#e11d48">queue_threshold (30)</text>
+
+  <!-- sawtooth: drain (green) then refill jump (purple) -->
+  <!-- segment 1 -->
+  <line x1="120" y1="192" x2="320" y2="280" stroke="#16a34a" stroke-width="3"/>
+  <line x1="320" y1="280" x2="320" y2="192" stroke="#9333ea" stroke-width="3"/>
+  <!-- segment 2 -->
+  <line x1="320" y1="192" x2="520" y2="280" stroke="#16a34a" stroke-width="3"/>
+  <line x1="520" y1="280" x2="520" y2="192" stroke="#9333ea" stroke-width="3"/>
+  <!-- segment 3 -->
+  <line x1="520" y1="192" x2="720" y2="280" stroke="#16a34a" stroke-width="3"/>
+  <line x1="720" y1="280" x2="720" y2="192" stroke="#9333ea" stroke-width="3"/>
+  <!-- segment 4 partial -->
+  <line x1="720" y1="192" x2="860" y2="253" stroke="#16a34a" stroke-width="3"/>
+
+  <!-- replan markers -->
+  <circle cx="320" cy="280" r="4.5" fill="#9333ea"/>
+  <circle cx="520" cy="280" r="4.5" fill="#9333ea"/>
+  <circle cx="720" cy="280" r="4.5" fill="#9333ea"/>
+  <text x="300" y="306" font-size="12" fill="#9333ea">リプラン</text>
+  <text x="500" y="306" font-size="12" fill="#9333ea">リプラン</text>
+  <text x="700" y="306" font-size="12" fill="#9333ea">リプラン</text>
+
+  <!-- drain annotation -->
+  <text x="150" y="232" font-size="12" fill="#16a34a">pop で減少 (fps)</text>
+  <text x="330" y="232" font-size="12" fill="#9333ea">補充で増加</text>
+
+  <text x="120" y="375" font-size="13" fill="#555">→ 実効リプラン間隔 ≈ chunk_size − queue_threshold（例: 50 − 30 ≈ 20 ステップ）。「いつ作り直すか」は queue_threshold が決める。</text>
+
+  <!-- ============ Panel B: one chunk weight schedule ============ -->
+  <text x="40" y="430" font-size="19" font-weight="700" fill="#1a56db">B. 生成した1チャンク（長さ chunk_size=50）の中での重み付け</text>
+
+  <!-- timeline axis -->
+  <!-- scale: 14.8 px/step, base x=120 -->
+  <line x1="120" y1="560" x2="860" y2="560" stroke="#888" stroke-width="1.5"/>
+  <text x="845" y="610" font-size="13" fill="#555">timestep</text>
+
+  <!-- region shading -->
+  <!-- frozen [0,3) -->
+  <rect x="120" y="470" width="44.4" height="90" fill="#fde68a" opacity="0.6"/>
+  <!-- blend [3,10) -->
+  <rect x="164.4" y="470" width="103.6" height="90" fill="#bfdbfe" opacity="0.6"/>
+  <!-- free [10,50) -->
+  <rect x="268" y="470" width="592" height="90" fill="#e5e7eb" opacity="0.6"/>
+
+  <!-- weight curve: y=470 is weight 1.0, y=560 is weight 0 -->
+  <polyline points="120,470 164.4,470 268,560 860,560" fill="none" stroke="#dc2626" stroke-width="3"/>
+  <text x="124" y="464" font-size="12" fill="#dc2626">weight=1.0</text>
+  <text x="790" y="554" font-size="12" fill="#dc2626">weight=0</text>
+
+  <!-- tick marks -->
+  <line x1="120" y1="556" x2="120" y2="564" stroke="#555"/>
+  <text x="112" y="582" font-size="12" fill="#555">0</text>
+  <line x1="164.4" y1="556" x2="164.4" y2="564" stroke="#555"/>
+  <text x="150" y="582" font-size="12" fill="#555">delay=3</text>
+  <line x1="268" y1="556" x2="268" y2="564" stroke="#555"/>
+  <text x="236" y="600" font-size="12" fill="#555">execution_horizon=10</text>
+  <line x1="860" y1="556" x2="860" y2="564" stroke="#555"/>
+  <text x="848" y="582" font-size="12" fill="#555">50</text>
+
+  <!-- region labels -->
+  <text x="118" y="492" font-size="12.5" font-weight="700" fill="#92400e">凍結</text>
+  <text x="180" y="492" font-size="12.5" font-weight="700" fill="#1e40af">ブレンド</text>
+  <text x="520" y="492" font-size="12.5" font-weight="700" fill="#374151">自由</text>
+
+  <!-- leftover bracket: 0..execution_horizon -->
+  <line x1="120" y1="636" x2="268" y2="636" stroke="#0d9488" stroke-width="2"/>
+  <line x1="120" y1="631" x2="120" y2="641" stroke="#0d9488" stroke-width="2"/>
+  <line x1="268" y1="631" x2="268" y2="641" stroke="#0d9488" stroke-width="2"/>
+  <text x="124" y="656" font-size="12.5" fill="#0d9488">leftover を使う範囲 = execution_horizon（前チャンクとの連続性ターゲット）</text>
+
+  <!-- new chunk free bracket -->
+  <line x1="268" y1="668" x2="860" y2="668" stroke="#6b7280" stroke-width="2"/>
+  <line x1="268" y1="663" x2="268" y2="673" stroke="#6b7280" stroke-width="2"/>
+  <line x1="860" y1="663" x2="860" y2="673" stroke="#6b7280" stroke-width="2"/>
+  <text x="430" y="688" font-size="12.5" fill="#6b7280">新しい観測に基づき自由に生成</text>
+
+  <!-- summary box -->
+  <rect x="40" y="708" width="880" height="56" rx="8" fill="#f3f4f6" stroke="#d1d5db"/>
+  <text x="56" y="730" font-size="13.5" fill="#111"><tspan font-weight="700">delay</tspan>（レイテンシ由来）= 先頭の凍結幅　|　<tspan font-weight="700">execution_horizon</tspan> = leftover を使う長さ＝ブレンド終端　|　<tspan font-weight="700">queue_threshold</tspan> = リプラン頻度</text>
+  <text x="56" y="752" font-size="13.5" fill="#111"><tspan font-weight="700">chunk_size</tspan> = キューに積む実行ステップ数（50）。execution_horizon はキュー長を決めない（別物）。</text>
+</svg>

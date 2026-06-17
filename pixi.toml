@@ -51,6 +51,8 @@ pyserial = ">=3.5,<4"
 psutil = ">=7.2.2,<8"
 ffmpeg = "*"
 
+
 [pypi-dependencies]
 lerobot = { path = "third_party/lerobot", editable = true, extras = ["feetech", "training", "smolvla"] }
 torchcodec = ">=0.11.1, <0.12"
+mujoco = ">=3.9.0, <4"
