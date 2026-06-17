@@ -4,6 +4,8 @@
 
 first octpus vla project repository
 
+📖 **ドキュメント:** <https://octpus-vla.github.io/reactive-vla/>
+
 ## セットアップ
 
 このリポジトリは `lerobot` を `third_party/lerobot` に git submodule として取り込み、pixi の editable install で利用します。

@@ -1,47 +1,8 @@
-# reactive-vla
-
-English | [日本語](README-ja.md)
-
-first octpus vla project repository
-
-📖 **Documentation:** <https://octpus-vla.github.io/reactive-vla/>
-
-## Setup
-
-This repository pulls in `lerobot` as a git submodule at `third_party/lerobot` and uses pixi's editable install.
-
-### 1. Fetch the submodule
-
-```bash
-git submodule update --init --recursive
-```
-
-The submodule is referenced over HTTPS (`https://github.com/Octpus-VLA/lerobot.git`), so no SSH key setup is required.
-
-### 2. Set up the environment
-
-```bash
-pixi install
-```
-
-- [pixi.toml](pixi.toml) registers `osx-arm64` / `linux-64` / `linux-aarch64` under `platforms`. If your machine uses a different architecture, add it with `pixi workspace platform add <platform>`.
-- `ffmpeg` is included as a conda dependency, which is required for video decoding (`lerobot[dataset]` / torchcodec).
-
-### 3. Lint / Format
-
-```bash
-pixi run lint   # ruff check
-pixi run fmt    # ruff format
-pixi run fix    # check --fix + format
-```
-
-For detailed configuration and how to add custom policies, see [docs/lerobot-editable-setup.md](docs/lerobot-editable-setup.md).
-
-## Trial run: Fine-tuning SmolVLA on a SO-101 dataset
+# Trial run: Fine-tuning SmolVLA on a SO-101 dataset
 
 This is an example of fine-tuning the pretrained [`lerobot/smolvla_base`](https://huggingface.co/lerobot/smolvla_base) model (450M) on the SO-101 pick & place demo dataset [`lerobot/svla_so101_pickplace`](https://huggingface.co/datasets/lerobot/svla_so101_pickplace). It's meant as a smoke test, so no physical robot or camera is required.
 
-### 1. (On HPC) Move to a GPU node
+## 1. (On HPC) Move to a GPU node
 
 On HPC systems, move from a CPU node (login/interactive node) to a GPU node before running this. As long as `/work` is on a shared filesystem such as Lustre, the `.pixi` environment and the submodule can be used as-is.
 
@@ -51,7 +12,7 @@ qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=00:15:00
 
 Once on the GPU node, `cd` back into the project directory and run the following.
 
-### 2. Run fine-tuning
+## 2. Run fine-tuning
 
 `pixi run train` (`cli/so101.py train`) only supports `--policy.type` (training from scratch) and doesn't support `--policy.path` (resuming from a pretrained model), so run `lerobot-train` directly.
 
@@ -74,7 +35,7 @@ pixi run lerobot-train \
 - Set `--policy.device` to `cuda` / `mps` / `cpu` depending on your hardware.
 - Training output is written to `outputs/` (gitignored).
 
-### 3. Verify with offline inference (no robot needed)
+## 3. Verify with offline inference (no robot needed)
 
 ```bash
 pixi run policy-test \
@@ -84,4 +45,5 @@ pixi run policy-test \
 
 This feeds recorded dataset frames into the fine-tuned policy and reports inference latency and the deviation from the recorded actions.
 
-Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/smolvla)
+!!! note "Reference"
+    [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/smolvla)

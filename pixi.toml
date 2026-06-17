@@ -54,3 +54,19 @@ ffmpeg = "*"
 [pypi-dependencies]
 lerobot = { path = "third_party/lerobot", editable = true, extras = ["feetech", "training", "smolvla"] }
 torchcodec = ">=0.11.1, <0.12"
+
+# --- Docs site (MkDocs Material) ---------------------------------------------
+# torch/lerobot を含めない軽量環境。ローカル: pixi run -e docs docs-serve
+[feature.docs.dependencies]
+python = "3.12.*"
+
+[feature.docs.pypi-dependencies]
+mkdocs-material = "*"
+mkdocs-static-i18n = "*"
+
+[feature.docs.tasks]
+docs-serve = "mkdocs serve"          # ローカルプレビュー (http://127.0.0.1:8000)
+docs-build = "mkdocs build --strict" # 本番ビルド (site/ に出力)
+
+[environments]
+docs = { features = ["docs"], no-default-feature = true }
