@@ -1,0 +1,11 @@
+<mujoco model="so_arm100 scene with cameras">
+  <!-- Menagerie の scene.xml（pristine）に SmolVLA 用のオフスクリーンカメラを足したもの。
+       upstream の scene.xml は由来保持のため未編集。カメラ位置・向きは暫定値で、
+       実機の撮影アングルに合わせて要調整（mujoco.viewer で当たりを付けると早い）。 -->
+  <include file="scene.xml"/>
+
+  <worldbody>
+    <camera name="cam1" pos="0.4 0.0 0.4" xyaxes="0 -1 0 0.3 0 1"/>
+    <camera name="cam2" pos="0.0 0.5 0.4" xyaxes="-1 0 0 0 -0.5 1"/>
+  </worldbody>
+</mujoco>

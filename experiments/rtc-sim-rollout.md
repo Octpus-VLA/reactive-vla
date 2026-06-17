@@ -25,23 +25,15 @@ RTC の仕組みの早見表は [docs/rtc-async-mechanism.md](../docs/rtc-async-
 
 ## セットアップ手順（HPC GPU/Linux ノード）
 
-### 1. MuJoCo モデルを取得
+### 1. MuJoCo モデル（リポジトリ同梱）
 
-DeepMind Menagerie の SO-ARM100 モデルを使う（Apache-2.0）。
+DeepMind Menagerie の SO-ARM100 モデル（Apache-2.0）を `assets/so_arm100/` に同梱済み。clone 不要。
 
-```bash
-git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git
-# 必要なのは mujoco_menagerie/trs_so_arm100/ 配下（scene.xml + so_arm100.xml + assets/）
-```
+- `assets/so_arm100/scene.xml` … upstream そのまま（pristine、カメラなし）
+- `assets/so_arm100/scene_cameras.xml` … 上記に SmolVLA 用カメラ（`cam1` / `cam2`）を足したもの。**ロールアウトではこちらを使う**
+- `assets/so_arm100/so_arm100.xml` + `assets/`・`LICENSE`・`README.md` … モデル本体と由来
 
-`scene.xml` には `<camera>` が無いので、SmolVLA 用にカメラを追記する。`<worldbody>` 内に例えば：
-
-```xml
-<camera name="cam1" pos="0.4 0.0 0.4" xyaxes="0 -1 0 0.3 0 1"/>
-<camera name="cam2" pos="0.0 0.5 0.4" xyaxes="-1 0 0 0 -0.5 1"/>
-```
-
-（位置・向きは要調整。`mujoco.viewer` で当たりを付けると早い。）
+カメラ位置・向きは `scene_cameras.xml` 内の暫定値なので、実機の撮影アングルに合わせて要調整（`mujoco.viewer` で当たりを付けると早い）。
 
 ### 2. mujoco を環境に入れる
 
@@ -65,7 +57,7 @@ pixi run lerobot-rollout \
   --policy.rtc_config.enabled=true \
   --policy.rtc_config.execution_horizon=10 \
   --robot.type=sim_so101 \
-  --robot.mjcf_path=$PWD/mujoco_menagerie/trs_so_arm100/scene.xml \
+  --robot.mjcf_path=$PWD/assets/so_arm100/scene_cameras.xml \
   --robot.cameras='{camera1: {mujoco_name: cam1, width: 320, height: 240}, camera2: {mujoco_name: cam2, width: 320, height: 240}}' \
   --robot.control_fps=30 \
   --inference.type=rtc \
@@ -78,7 +70,7 @@ pixi run lerobot-rollout \
 
 ## HPC で検証すべき項目（要対応）
 
-1. **MJCF の joint/actuator 名**: `SimSO101Config.joint_map` の既定（`Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll/Jaw`）が実際の `so_arm100.xml` と一致するか。`connect` で不一致なら fail-fast するので、エラーが出たら joint_map を実名に合わせる。
+1. ~~**MJCF の joint/actuator 名**~~: 同梱した `assets/so_arm100/so_arm100.xml` の actuator/joint 名（`Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll/Jaw`）が `SimSO101Config.joint_map` の既定と一致することを確認済み。差し替えない限り対応不要。
 2. **RTCConfig が2系統**: ポリシー側 `--policy.rtc_config.*`（ガイダンス発火）とエンジン側 `--inference.rtc.*`（キュー/execution_horizon）。**両方の `execution_horizon` を一致**させる。`predict_action_chunk` に execution_horizon kwarg を渡していないため、ガイダンスはポリシー側 config を見る点に注意。
 3. **カメラ名の一致**: `--robot.cameras` のキー（`camera1` 等）を、ファインチューニング時のカメラ名に合わせる（README の rename_map 参照。学習で使ったキーと不一致だと画像入力が噛み合わない）。
 4. **単位変換の妥当性**: body 関節は deg↔rad 線形、gripper は MJCF の joint range と [0,100] を線形対応させているだけ。符号・オフセット・キャリブが学習データの action 空間とズレる可能性。記録データ1エピソードを `send_action` に流して qpos が妥当に動くか確認すると良い。
