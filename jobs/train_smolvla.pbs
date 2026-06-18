@@ -1,0 +1,32 @@
+#!/bin/bash
+# SmolVLA ファインチューニング (Miyabi-G / GH200)。リポジトリ root から投入する。
+#   qsub jobs/train_smolvla.pbs                          # 既定で実行
+#   qsub -v STEPS=10000 jobs/train_smolvla.pbs           # knob を上書き
+#   qsub -v RESUME=true jobs/train_smolvla.pbs           # 最後のckptから再開
+#   qsub -l walltime=06:00:00 -q small-g jobs/train_smolvla.pbs   # queue/walltime 上書き
+
+#PBS -q short-g
+#PBS -W group_list=gw13
+#PBS -l select=1
+#PBS -l walltime=03:00:00
+#PBS -N train_smolvla
+#PBS -j oe
+
+set -euo pipefail
+cd "${PBS_O_WORKDIR:-$(pwd)}"
+
+DATASET_REPO="${DATASET_REPO:-lerobot/svla_so101_pickplace}"
+RENAME_MAP="${RENAME_MAP:-{\"observation.images.up\": \"observation.images.camera1\", \"observation.images.side\": \"observation.images.camera2\"}}"
+STEPS="${STEPS:-20000}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/train/smolvla_so101_pickplace}"
+
+if [ "${RESUME:-false}" = "true" ]; then
+  pixi run lerobot-train \
+    --config_path="${OUTPUT_DIR}/checkpoints/last/pretrained_model/train_config.json" --resume=true
+else
+  pixi run lerobot-train \
+    --policy.path=lerobot/smolvla_base --policy.push_to_hub=false --policy.device=cuda \
+    --dataset.repo_id="${DATASET_REPO}" --rename_map="${RENAME_MAP}" \
+    --batch_size="${BATCH_SIZE:-64}" --steps="${STEPS}" --save_freq="${SAVE_FREQ:-2000}" \
+    --output_dir="${OUTPUT_DIR}" --wandb.enable=false
+fi

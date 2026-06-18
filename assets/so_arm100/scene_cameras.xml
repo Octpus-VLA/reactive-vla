@@ -1,0 +1,13 @@
+<mujoco model="so_arm100 scene with cameras">
+  <!-- Menagerie の scene.xml（pristine）に SmolVLA 用のオフスクリーンカメラを足したもの。
+       upstream の scene.xml は由来保持のため未編集。カメラ位置・向きは暫定値で、
+       実機の撮影アングルに合わせて要調整（mujoco.viewer で当たりを付けると早い）。 -->
+  <include file="scene.xml"/>
+
+  <worldbody>
+    <!-- アーム前方の作業領域 (0.15, 0, 0.04) を注視する lookat カメラ。
+         cam1=正面やや上、cam2=斜め上(3/4)。当たり値だが両視点とも arm+cube を捉える。 -->
+    <camera name="cam1" pos="0.4200 0.0000 0.1600" xyaxes="0.0000 1.0000 0.0000 -0.4061 0.0000 0.9138"/>
+    <camera name="cam2" pos="0.3000 0.3000 0.3400" xyaxes="-0.8944 0.4472 0.0000 -0.2981 -0.5963 0.7454"/>
+  </worldbody>
+</mujoco>
