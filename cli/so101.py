@@ -742,9 +742,21 @@ def evaluate(
     ),
     task: str = typer.Option(..., "--task", help="Natural-language task description."),
     repo_id: str = typer.Option(
-        ..., "--repo-id", help="Eval dataset id; should start with 'eval_'. 'name' → prefixed with HF user."
+        ...,
+        "--repo-id",
+        help="Eval dataset id; should start with 'rollout_'. 'name' → prefixed with HF user.",
     ),
     episodes: int = typer.Option(10, "--episodes"),
+    episode_time: float = typer.Option(
+        None,
+        "--episode-time",
+        help="Seconds per episode before it auto-stops (lerobot default 60). Right-arrow ends one early.",
+    ),
+    reset_time: float = typer.Option(
+        None,
+        "--reset-time",
+        help="Seconds between episodes for the follower to return to its initial position (lerobot default 60).",
+    ),
     fps: int = typer.Option(30, "--fps"),
     push: bool = typer.Option(False, "--push/--no-push"),
     overwrite: bool = typer.Option(
@@ -761,27 +773,37 @@ def evaluate(
     ),
     cameras: bool = typer.Option(True, "--cameras/--no-cameras"),
 ) -> None:
-    """Run a trained policy on the follower and record eval episodes (lerobot-record + --policy.path)."""
+    """Run a trained policy on the follower and record eval episodes (lerobot-rollout, episodic strategy).
+
+    Between episodes the follower automatically returns to its startup position (no leader needed).
+    """
     cfg = _load()
     foll = _require(cfg, "follower")  # the policy drives the follower; no leader needed
     repo = _resolve_repo(repo_id, for_creation=True)
     name = repo.split("/")[-1]
-    if not name.startswith("eval_"):
+    if not name.startswith("rollout_"):
         raise typer.BadParameter(
-            f"lerobot requires eval dataset names to start with 'eval_' (you gave '{name}'). "
-            f"Use e.g. --repo-id eval_test."
+            f"lerobot requires rollout dataset names to start with 'rollout_' (you gave '{name}'). "
+            f"Use e.g. --repo-id rollout_test."
         )
     _maybe_overwrite(repo, overwrite)
     cmd = [
-        "lerobot-record",
+        "lerobot-rollout",
         *_arm_flags("robot", foll),
         f"--policy.path={_resolve_policy(policy)}",
+        "--strategy.type=episodic",
+        "--inference.type=sync",
+        f"--task={task}",
+        f"--fps={fps}",
         f"--dataset.repo_id={repo}",
         f"--dataset.num_episodes={episodes}",
-        f"--dataset.single_task={task}",
         f"--dataset.fps={fps}",
         f"--dataset.push_to_hub={'true' if push else 'false'}",
     ]
+    if episode_time is not None:
+        cmd.append(f"--dataset.episode_time_s={episode_time}")
+    if reset_time is not None:
+        cmd.append(f"--dataset.reset_time_s={reset_time}")
     extra = list(ctx.args)
     _add_cameras_display(cmd, foll, extra, cameras, display)
     _add_max_rel(cmd, extra, max_rel)
