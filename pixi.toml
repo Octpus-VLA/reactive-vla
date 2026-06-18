@@ -28,13 +28,15 @@ calibrate = "python cli/so101.py calibrate"      # usage: pixi run calibrate lea
 teleop = "python cli/so101.py teleop"            # uses both saved arms; no args needed
 
 # --- Imitation-learning pipeline (record -> train -> eval) -------------------
-hf-login = "hf auth login"                           # log in before pushing datasets/policies
+hf-login = "python -c 'from huggingface_hub import login; login()'"  # log in before pushing datasets/policies
+wandb-login = "python -m wandb login"                # log in before logging training runs to W&B
 record = "python cli/so101.py record"            # usage: pixi run record --task "..." --repo-id name
 replay = "python cli/so101.py replay"            # usage: pixi run replay --repo-id name --episode 0
 viz = "python cli/so101.py viz"                  # usage: pixi run viz --repo-id name --episode 0
 drop = "python cli/so101.py drop"                # usage: pixi run drop --repo-id name --episodes 0,2
 upload = "python cli/so101.py upload"            # usage: pixi run upload --repo-id name  (existing local dataset)
-train = "python cli/so101.py train"              # usage: pixi run train --repo-id name [--policy act]
+train = "python cli/so101.py train"              # usage: pixi run train --repo-id name [--policy act | --policy-path lerobot/smolvla_base] [--wandb] [--push-repo-id name]
+push-policy = "python cli/so101.py push-policy"  # usage: pixi run push-policy --checkpoint outputs/train/<job>/checkpoints/last --repo-id name
 eval = "python cli/so101.py eval"                # usage: pixi run eval --policy <ckpt> --task "..." --repo-id eval_name
 policy-test = "python cli/so101.py policy-test"  # offline inference smoke test (no robot needed)
 

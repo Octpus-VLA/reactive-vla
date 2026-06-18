@@ -49,39 +49,127 @@ On HPC systems, move from a CPU node (login/interactive node) to a GPU node befo
 qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=00:15:00
 ```
 
-Once on the GPU node, `cd` back into the project directory and run the following.
+Once on the GPU node, `cd` back into the project directory.
+
+```bash
+cd /work/gw13/$USER/$PROJECT
+```
 
 ### 2. Run fine-tuning
 
-`pixi run train` (`cli/so101.py train`) only supports `--policy.type` (training from scratch) and doesn't support `--policy.path` (resuming from a pretrained model), so run `lerobot-train` directly.
+`pixi run train` accepts either `--policy-path` (fine-tune from a pretrained model) or `--policy` (train from scratch); the two are mutually exclusive.
 
 ```bash
-pixi run lerobot-train \
-  --policy.path=lerobot/smolvla_base \
-  --policy.push_to_hub=false \
-  --dataset.repo_id=lerobot/svla_so101_pickplace \
-  --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}' \
-  --batch_size=64 \
-  --steps=20000 \
-  --output_dir=outputs/train/smolvla_so101_pickplace \
-  --job_name=smolvla_so101_pickplace \
-  --policy.device=cuda \
-  --wandb.enable=false
+pixi run train \
+  --policy-path lerobot/smolvla_base \
+  --repo-id lerobot/svla_so101_pickplace \
+  --batch-size 64 \
+  --steps 20000 \
+  --job-name smolvla_so101_pickplace \
+  --device cuda \
+  -- --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}'
 ```
 
-- `lerobot/svla_so101_pickplace`'s camera names (`observation.images.up` / `observation.images.side`) differ from what `smolvla_base` expects (3 cameras: `camera1`-`camera3`), so `--rename_map` maps them accordingly (`camera3` is left unused).
-- A GPU is recommended (about 4 hours for 20k steps on an A100). For a quick smoke test, reduce `--steps` to something like `200`.
-- Set `--policy.device` to `cuda` / `mps` / `cpu` depending on your hardware.
+- `lerobot/svla_so101_pickplace`'s camera names (`observation.images.up` / `observation.images.side`) differ from what `smolvla_base` expects (3 cameras: `camera1`–`camera3`), so `--rename_map` remaps them (`camera3` is left unused). Arguments after `--` are forwarded verbatim to `lerobot-train`.
+- A GPU is recommended (about 4 hours for 20k steps on an A100). For a quick smoke test, use `--steps 2000`.
+- `--device` accepts `cuda` / `mps` / `cpu`. Omit it for auto-detection.
 - Training output is written to `outputs/` (gitignored).
+
+#### Logging to W&B
+
+```bash
+pixi run wandb-login   # first time only (skipped if already logged in)
+
+pixi run train \
+  --policy-path lerobot/smolvla_base \
+  --repo-id lerobot/svla_so101_pickplace \
+  --batch-size 64 \
+  --steps 20000 \
+  --job-name smolvla_so101_pickplace \
+  --device cuda \
+  --wandb \
+  --wandb-project <project> \
+  --wandb-entity <team> \
+  -- --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}'
+```
+
+- `--wandb-project` defaults to `lerobot` if omitted.
+- `--wandb-entity` defaults to your personal account. Set it to your W&B team name (the `<team>` part of `wandb.ai/<team>`) to log under a team.
+- Standard metrics logged: `train/loss`, `train/lr`, `train/grad_norm`.
+- The default `log_freq` is 200 (one log entry per 200 steps). Override it with `-- --log_freq=50` if you need finer resolution.
+
+#### Pushing a trained policy to Hugging Face Hub
+
+**Push during training** (just add `--push-repo-id`):
+
+```bash
+pixi run hf-login   # first time only (skipped if already logged in)
+
+pixi run train \
+  --policy-path lerobot/smolvla_base \
+  --repo-id lerobot/svla_so101_pickplace \
+  --batch-size 64 \
+  --steps 20000 \
+  --job-name smolvla_so101_pickplace \
+  --device cuda \
+  --push-repo-id smolvla_so101_pickplace \
+  -- --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}'
+```
+
+A bare name (no slash) is automatically prefixed with your HF username (e.g. `smolvla_so101_pickplace` → `<HF-user>/smolvla_so101_pickplace`).
+
+**Push after training**:
+
+```bash
+pixi run push-policy \
+  --checkpoint outputs/train/smolvla_base/svla_so101_pickplace/<timestamp>/checkpoints/last \
+  --repo-id smolvla_so101_pickplace
+```
+
+Pass the checkpoint directory; if a `pretrained_model/` subdirectory exists it is detected automatically. Add `--private` to create a private Hub repo.
+
+> `output_dir` is always `outputs/train/<policy>/<dataset>/<timestamp>` (`MMDD_HHMM`). `--job-name` only sets the W&B display name and is never folded into the directory, so rerunning with the same `--job-name` won't collide with an existing directory. Check the training log (`--output_dir=...`) for the actual path.
 
 ### 3. Verify with offline inference (no robot needed)
 
 ```bash
 pixi run policy-test \
-  --policy outputs/train/smolvla_so101_pickplace/checkpoints/last/pretrained_model \
+  --policy outputs/train/smolvla_base/svla_so101_pickplace/<timestamp>/checkpoints/last/pretrained_model \
   --repo-id lerobot/svla_so101_pickplace
 ```
 
 This feeds recorded dataset frames into the fine-tuned policy and reports inference latency and the deviation from the recorded actions.
 
 Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/smolvla)
+
+## Fine-tuning with pi0
+
+[`lerobot/pi0_base`](https://huggingface.co/lerobot/pi0_base) is a PaLiGemma-based ~3B parameter model. Unlike `smolvla_base`, it dynamically reads camera names from the dataset features, so `--rename_map` is not needed.
+
+> **Known issue**: Fine-tuning `lerobot/pi0_base` is currently known to hang at `Loading model from: lerobot/pi0_base` → `model.safetensors`. We are investigating this issue; running pi0 is not recommended at this time.
+
+### Run fine-tuning
+
+```bash
+pixi run train \
+  --policy-path lerobot/pi0_base \
+  --repo-id lerobot/svla_so101_pickplace \
+  --batch-size 4 \
+  --steps 200 \
+  --device cuda
+```
+
+- Use a small `--batch-size` (4–8) due to the large model size. Gradient checkpointing may be needed even on an A100 80GB — add `-- --policy.gradient_checkpointing=true` if required.
+- `--rename_map` is not needed (pi0 uses the dataset's camera names as-is).
+
+### Verify with offline inference (no robot needed)
+
+```bash
+pixi run policy-test \
+  --policy outputs/train/pi0_base/svla_so101_pickplace/<timestamp>/checkpoints/last/pretrained_model \
+  --repo-id lerobot/svla_so101_pickplace
+```
+
+## Troubleshooting
+
+Use `qstat` to check running jobs.
