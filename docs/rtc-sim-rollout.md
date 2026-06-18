@@ -44,7 +44,7 @@ export MUJOCO_GL=egl         # ヘッドレスGPU描画。ダメなら osmesa（
 
 **RTC は推論時のテクニックなので、学習側に RTC 用の処理は一切不要**（普通の SmolVLA ファインチューニングでよい）。RTC の有無はロールアウト時に切り替える。
 
-GPU ノードでの学習は PBS ジョブ [`jobs/train_smolvla.pbs`](../jobs/train_smolvla.pbs) を使う（リポジトリ root から投入）：
+GPU ノードでの学習は PBS ジョブ [`jobs/train_smolvla.pbs`](https://github.com/Octpus-VLA/reactive-vla/blob/main/jobs/train_smolvla.pbs) を使う（リポジトリ root から投入）：
 
 ```bash
 qsub jobs/train_smolvla.pbs                       # 既定: 20000 steps, save_freq=2000, short-g(<=8h)
