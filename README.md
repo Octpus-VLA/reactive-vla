@@ -4,7 +4,38 @@ English | [日本語](README-ja.md)
 
 first octpus vla project repository
 
-📖 **Documentation:** <https://octpus-vla.github.io/reactive-vla/>
+📖 **Documentation:** <https://octpus-vla.github.io/reactive-vla/> — step-by-step guides (setup, SmolVLA fine-tuning, editable lerobot, RTC sim rollout). This README is the command/feature reference; the docs site is the narrative walkthrough.
+
+## Features
+
+- **SO-101 hardware CLI** (`cli/so101.py`, exposed as `pixi run <command>`) — register the leader/follower arms once, then calibrate, teleoperate, record/replay/visualize/edit datasets, and push them to the Hub. See the [command table](#so-101-commands-pixi-run-command) below. The arm registration/teleop flow (`set-port` → `setup-motors` → `calibrate` → `teleop`) follows the pattern in [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop).
+- **Imitation-learning fine-tuning** — fine-tune `smolvla_base` or `pi0_base` on a SO-101 dataset (or train a policy from scratch), with optional W&B logging and Hugging Face Hub push. See [Trial run: Fine-tuning SmolVLA](#trial-run-fine-tuning-smolvla-on-a-so-101-dataset) and [Fine-tuning with pi0](#fine-tuning-with-pi0) below.
+- **HPC batch training** — submit fine-tuning as a PBS job ([`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs)) instead of running `pixi run train` interactively.
+- **MuJoCo simulation** — a bundled SO-ARM100 model + `sim_so101` robot adapter let you exercise the async RTC rollout path without physical hardware. See [MuJoCo simulation](#mujoco-simulation-async-rtc-rollout) below.
+
+### SO-101 commands (`pixi run <command>`)
+
+| Command | Purpose |
+|---|---|
+| `set-port leader\|follower` | Detect & save the arm's serial port |
+| `arms` | Show registered arms/cameras |
+| `check leader\|follower` | Per-motor diagnostic on the saved port |
+| `set-camera <name> --index N` | Attach (or remove) a camera on the follower |
+| `setup-motors leader\|follower` | Assign Feetech motor IDs |
+| `calibrate leader\|follower` | Run `lerobot-calibrate` with the saved port/id |
+| `teleop` | Drive both saved arms (`lerobot-teleoperate`) |
+| `record --task "..." --repo-id name` | Record a teleoperated dataset |
+| `replay --repo-id name --episode N` | Replay a recorded episode on the follower |
+| `viz --repo-id name --episode N` | Visualize an episode (frames/states/actions) in Rerun |
+| `drop --repo-id name --episodes 0,2` | Delete bad episodes from a local dataset |
+| `upload --repo-id name` | Push a local dataset to the Hugging Face Hub |
+| `train --repo-id name [--policy act \| --policy-path ...]` | Fine-tune or train a policy (see below) |
+| `push-policy --checkpoint ... --repo-id name` | Push a trained checkpoint to the Hub |
+| `policy-test --policy ... --repo-id ...` | Offline inference smoke test (no robot needed) |
+| `eval --policy ... --task "..." --repo-id rollout_name` | Run a trained policy on the follower and record eval episodes |
+| `hf-login` / `wandb-login` | One-time login helpers (needed before pushing/logging) |
+
+Run `pixi run <command> --help` for the full flag list. Flags placed after a forwarding command (`teleop`, `record`, `train`, `eval`, `replay`) are passed straight through to the underlying `lerobot-*` CLI.
 
 ## Setup
 
@@ -174,6 +205,51 @@ pixi run policy-test \
 ## MuJoCo simulation: async RTC rollout
 
 A SO-ARM100 MuJoCo model is bundled at `assets/so_arm100/` (no clone needed), with a `sim_so101` robot adapter (in the `lerobot` fork) so the hardware-only `lerobot-rollout --inference.type=rtc` (async Real-Time Chunking) path can be exercised end-to-end without a physical robot — including offscreen rendering and episode recording. See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) for the full setup/train/rollout walkthrough and RTC parameter reference.
+
+## Roadmap: extending to conveyor-belt grasping (design phase)
+
+> This section describes planned, not-yet-implemented work. For shipped functionality, see [Features](#features) above.
+
+### Target task
+
+- Grasp an object moving on a belt conveyor and place it in a box.
+- The belt speed should vary across multiple settings.
+- A new detector, built from image input, flags when an object is approaching; on detection it requests the VLA to regenerate its Action Chunk, reacting faster than the default queue-size-based replanning.
+- Both the VLA (assumed `smolvla_base`) and the detector need training.
+- The detector's implementation is undecided; the goal is a pluggable design so any detector implementation can be swapped in.
+
+### Current pipeline (recap)
+
+1. SO-101 hardware setup → `set-port` → `setup-motors` → `calibrate` → `set-camera` (one-time).
+2. `record` to teleoperate and record a dataset (currently static pick & place only).
+3. `train` (or a PBS job) to fine-tune `smolvla_base`.
+4. `policy-test` for an offline inference sanity check.
+5. `eval` to run the policy on the follower — internally this is `lerobot-rollout --strategy.type=episodic --inference.type=sync`, i.e. **synchronous** inference, not RTC. Eval datasets must use the `rollout_` repo-id prefix (e.g. `rollout_test`), not `eval_`.
+6. Async RTC rollout (`lerobot-rollout --inference.type=rtc`) is currently **MuJoCo-sim only** ([docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md)). Switching to `--robot.type=so101_follower` should work in principle (same `Robot` abstraction), but it has never been run on real hardware, and `cli/so101.py` has no wrapper for it.
+
+### Step-by-step for the next real-hardware session
+
+1. `pixi run set-port leader` / `pixi run set-port follower` (one-time)
+2. `pixi run setup-motors leader` / `pixi run setup-motors follower` (one-time)
+3. `pixi run calibrate leader` / `pixi run calibrate follower`
+4. `pixi run set-camera <name> --index N` (attach a camera to the follower)
+5. `pixi run check leader` / `pixi run check follower` (optional pre-flight diagnostic)
+6. `pixi run teleop` to verify motion
+7. `pixi run record --task "pick the object from the belt and place it in the box" --repo-id <name> --episodes <N>` to collect data
+8. `pixi run train --policy-path lerobot/smolvla_base --repo-id <name> ...` to fine-tune (use [`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs) for long runs)
+9. `pixi run policy-test --policy <checkpoint> --repo-id <name>` for an offline check
+10. `pixi run eval --policy <checkpoint> --task "..." --repo-id rollout_<name>` for an on-robot, synchronous evaluation
+11. To try RTC on real hardware, there's no wrapper yet, so `lerobot-rollout` must be assembled by hand (`--robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'`, etc. — equivalent to swapping `--robot.type` in the sim commands in [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md)).
+
+### What's missing
+
+1. **The conveyor itself**: no variable-speed belt conveyor, and no way to record/reproduce its speed setting.
+2. **A task dataset**: the existing `lerobot/svla_so101_pickplace` is static pick & place. A new dataset covering pickup-from-belt → place-in-box needs to be collected.
+3. **No detector implementation exists yet**: inputs (image only, or also joint state?) and outputs (approach flag / distance / bbox) are undecided. A pluggable design needs an abstract detector interface (a swappable protocol) added on the `lerobot` fork side.
+4. **No event-driven trigger path from detector to RTC**: the current RTC engine (`rollout/inference/rtc.py`) only replans based on `queue_threshold` (remaining queue size). There's no hook yet for "force an immediate replan the moment the detector fires" (e.g. a `force_replan()` method).
+5. **No training data for the detector**: no pipeline exists for collecting/labeling "object is approaching" data.
+6. **No evaluation protocol for variable belt speed**: no tooling to compare success rate across different belt speeds (the existing `eval` only records episodes; it doesn't auto-score success/failure).
+7. **RTC itself is unverified on real hardware**: it has only been exercised in simulation, never run against `so101_follower`.
 
 ## Troubleshooting
 
