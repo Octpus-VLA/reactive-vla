@@ -120,17 +120,19 @@ pixi run train \
 
 ```bash
 pixi run push-policy \
-  --checkpoint outputs/train/smolvla_so101_pickplace/checkpoints/last \
+  --checkpoint outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last \
   --repo-id smolvla_so101_pickplace
 ```
 
 `--checkpoint` にはチェックポイントディレクトリを渡します（`pretrained_model/` サブディレクトリがあれば自動検出します）。`--private` を付けるとプライベートリポジトリとして作成されます。
 
+> `output_dir` は常に `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（`MMDD_HHMM`）です。`--job-name` は W&B 上の表示名だけに使われ、ディレクトリ名には含まれないので、同じ `--job-name` で再実行しても既存ディレクトリと衝突しません。実際のパスは学習実行時のログ（`--output_dir=...`）で確認してください。
+
 ### 3. オフライン推論で確認（ロボット不要）
 
 ```bash
 pixi run policy-test \
-  --policy outputs/train/smolvla_so101_pickplace/checkpoints/last/pretrained_model \
+  --policy outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
   --repo-id lerobot/svla_so101_pickplace
 ```
 

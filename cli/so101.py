@@ -230,6 +230,25 @@ def _auto_device() -> str:
     return "cpu"
 
 
+# output先のフォルダ名
+def _job_and_output_dir(
+    policy_path_or_type: str, repo: str, job_name: str | None, output_dir: str | None
+) -> tuple[str, str]:
+    """Derive a job name and output dir from policy/dataset/timestamp.
+
+    job_name is flat (used by W&B) and may repeat across runs. output_dir is always
+    policy/dataset/timestamp — job_name is never folded into it, since policy+dataset already
+    identify the run and a fixed extra segment would just collide with lerobot-train's
+    FileExistsError on rerun instead of giving each run its own directory.
+    """
+    policy_slug = policy_path_or_type.rstrip("/").split("/")[-1].replace(".", "_")
+    dataset_slug = repo.split("/")[-1]
+    ts = datetime.datetime.now().strftime("%m%d_%H%M")
+    job = job_name or f"{policy_slug}_{dataset_slug}_{ts}"
+    final_output_dir = output_dir or f"outputs/train/{policy_slug}/{dataset_slug}/{ts}"
+    return job, final_output_dir
+
+
 @app.command("find-port")
 def find_port(
     role: Role,
@@ -637,7 +656,9 @@ def train(
     ),
     device: str = typer.Option(None, "--device", help="cuda / mps / cpu (auto-detected if omitted)."),
     job_name: str = typer.Option(None, "--job-name", help="Defaults to <policy>_<dataset>."),
-    output_dir: str = typer.Option(None, "--output-dir", help="Defaults to outputs/train/<job-name>."),
+    output_dir: str = typer.Option(
+        None, "--output-dir", help="Defaults to outputs/train/<policy>/<dataset>/<timestamp>."
+    ),
     steps: int = typer.Option(
         None, "--steps", help="Total number of training steps (lerobot's default depends on the policy)."
     ),
@@ -678,12 +699,7 @@ def train(
     if not policy and not policy_path:
         raise typer.BadParameter("One of --policy or --policy-path is required.")
     repo = _resolve_repo(repo_id)
-    policy_slug = (policy or policy_path.rstrip("/").split("/")[-1]).replace(".", "_")
-    dataset_slug = repo.split("/")[-1]
-    ts = datetime.datetime.now().strftime("%m%d_%H%M")
-    # job_name is flat (used by W&B); output_dir is hierarchical: policy/dataset/timestamp-or-job
-    job = job_name or f"{policy_slug}_{dataset_slug}_{ts}"
-    final_output_dir = output_dir or f"outputs/train/{policy_slug}/{dataset_slug}/{job_name or ts}"
+    job, final_output_dir = _job_and_output_dir(policy or policy_path, repo, job_name, output_dir)
     cmd = [
         "lerobot-train",
         f"--dataset.repo_id={repo}",

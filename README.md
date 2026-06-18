@@ -120,17 +120,19 @@ A bare name (no slash) is automatically prefixed with your HF username (e.g. `sm
 
 ```bash
 pixi run push-policy \
-  --checkpoint outputs/train/smolvla_so101_pickplace/checkpoints/last \
+  --checkpoint outputs/train/smolvla_base/svla_so101_pickplace/<timestamp>/checkpoints/last \
   --repo-id smolvla_so101_pickplace
 ```
 
 Pass the checkpoint directory; if a `pretrained_model/` subdirectory exists it is detected automatically. Add `--private` to create a private Hub repo.
 
+> `output_dir` is always `outputs/train/<policy>/<dataset>/<timestamp>` (`MMDD_HHMM`). `--job-name` only sets the W&B display name and is never folded into the directory, so rerunning with the same `--job-name` won't collide with an existing directory. Check the training log (`--output_dir=...`) for the actual path.
+
 ### 3. Verify with offline inference (no robot needed)
 
 ```bash
 pixi run policy-test \
-  --policy outputs/train/smolvla_so101_pickplace/checkpoints/last/pretrained_model \
+  --policy outputs/train/smolvla_base/svla_so101_pickplace/<timestamp>/checkpoints/last/pretrained_model \
   --repo-id lerobot/svla_so101_pickplace
 ```
 
