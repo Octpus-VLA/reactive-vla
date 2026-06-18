@@ -14,32 +14,34 @@ Once on the GPU node, `cd` back into the project directory and run the following
 
 ## 2. Run fine-tuning
 
-`pixi run train` (`cli/so101.py train`) only supports `--policy.type` (training from scratch) and doesn't support `--policy.path` (resuming from a pretrained model), so run `lerobot-train` directly.
+`pixi run train` accepts either `--policy-path` (fine-tune from a pretrained model) or `--policy` (train from scratch); the two are mutually exclusive.
 
 ```bash
-pixi run lerobot-train \
-  --policy.path=lerobot/smolvla_base \
-  --policy.push_to_hub=false \
-  --dataset.repo_id=lerobot/svla_so101_pickplace \
-  --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}' \
-  --batch_size=64 \
-  --steps=20000 \
-  --output_dir=outputs/train/smolvla_so101_pickplace \
-  --job_name=smolvla_so101_pickplace \
-  --policy.device=cuda \
-  --wandb.enable=false
+pixi run train \
+  --policy-path lerobot/smolvla_base \
+  --repo-id lerobot/svla_so101_pickplace \
+  --batch-size 64 \
+  --steps 20000 \
+  --job-name smolvla_so101_pickplace \
+  --device cuda \
+  -- --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}'
 ```
 
-- `lerobot/svla_so101_pickplace`'s camera names (`observation.images.up` / `observation.images.side`) differ from what `smolvla_base` expects (3 cameras: `camera1`-`camera3`), so `--rename_map` maps them accordingly (`camera3` is left unused).
-- A GPU is recommended (about 4 hours for 20k steps on an A100). For a quick smoke test, reduce `--steps` to something like `200`.
-- Set `--policy.device` to `cuda` / `mps` / `cpu` depending on your hardware.
+- `lerobot/svla_so101_pickplace`'s camera names (`observation.images.up` / `observation.images.side`) differ from what `smolvla_base` expects (3 cameras: `camera1`-`camera3`), so `--rename_map` remaps them (`camera3` is left unused). Arguments after `--` are forwarded verbatim to `lerobot-train`.
+- A GPU is recommended (about 4 hours for 20k steps on an A100). For a quick smoke test, use `--steps 2000`.
+- `--device` accepts `cuda` / `mps` / `cpu`. Omit it for auto-detection.
 - Training output is written to `outputs/` (gitignored).
+
+!!! note "About the output path"
+    `output_dir` is always `outputs/train/<policy>/<dataset>/<timestamp>` (`MMDD_HHMM`). `--job-name` only sets the W&B display name and is never folded into the directory, so rerunning with the same `--job-name` won't collide with an existing directory. Check the training log (`--output_dir=...`) for the actual path.
+
+For W&B logging or pushing to the Hugging Face Hub, see the [README](https://github.com/Octpus-VLA/reactive-vla#trial-run-fine-tuning-smolvla-on-a-so-101-dataset).
 
 ## 3. Verify with offline inference (no robot needed)
 
 ```bash
 pixi run policy-test \
-  --policy outputs/train/smolvla_so101_pickplace/checkpoints/last/pretrained_model \
+  --policy outputs/train/smolvla_base/svla_so101_pickplace/<timestamp>/checkpoints/last/pretrained_model \
   --repo-id lerobot/svla_so101_pickplace
 ```
 

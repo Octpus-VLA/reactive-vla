@@ -49,29 +49,30 @@ GPU ノードでの学習は PBS ジョブ [`jobs/train_smolvla.pbs`](https://gi
 ```bash
 qsub jobs/train_smolvla.pbs                       # 既定: 20000 steps, save_freq=2000, short-g(<=8h)
 qsub -v STEPS=10000 jobs/train_smolvla.pbs        # 配線確認なら steps を減らして高速に
-qsub -v RESUME=true jobs/train_smolvla.pbs        # walltime で切れた後、最後のckptから再開
+qsub -v RESUME=outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last jobs/train_smolvla.pbs
+                                                   # walltime で切れた後、最後のckptから再開
 qsub -l walltime=06:00:00 -q small-g jobs/train_smolvla.pbs   # 長時間ジョブ
 ```
 
-監視 `qstat -u $USER`、ログは投入ディレクトリの `train_smolvla.o<jobid>`。完了すると `outputs/train/smolvla_so101_pickplace/checkpoints/last/pretrained_model` が生成され、ロールアウトの `--policy.path` にそのまま渡せる。
+監視 `qstat -u $USER`、ログは投入ディレクトリの `train_smolvla.o<jobid>`。完了すると `outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model` が生成され、ロールアウトの `--policy.path` にそのまま渡せる（実際のパスはログの `--output_dir=...` で確認）。
 
-インタラクティブに直接回すなら（ジョブ不要）：
+インタラクティブに直接回すなら（ジョブ不要、内部で `lerobot-train` を呼ぶ CLI ラッパー `pixi run train` を使う）：
 
 ```bash
-pixi run lerobot-train \
-  --policy.path=lerobot/smolvla_base --policy.push_to_hub=false --policy.device=cuda \
-  --dataset.repo_id=lerobot/svla_so101_pickplace \
-  --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}' \
-  --batch_size=64 --steps=10000 --save_freq=2000 \
-  --output_dir=outputs/train/smolvla_so101_pickplace --wandb.enable=false
+pixi run train \
+  --policy-path lerobot/smolvla_base \
+  --repo-id lerobot/svla_so101_pickplace \
+  --batch-size 64 --steps 10000 --save-freq 2000 \
+  --device cuda \
+  -- --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}'
 ```
 
 **学習のハマりどころ（実測）**
 
-- **`--save_freq` を小さく刻む**。既定は `20000` ＝途中保存ゼロで、walltime に殺されると全ロスト。`2000` 推奨。
+- **`--save-freq` を小さく刻む**。既定は `20000` ＝途中保存ゼロで、walltime に殺されると全ロスト。`2000` 推奨。
 - **walltime はステップ数に対し十分に**。GH200 で約 3.45 step/s（20000 steps ≈ 1h40m + データロード）。`interact-g`（上限2h）はギリギリなので 20000 はバッチ（`short-g`）が無難。
-- **`--policy.push_to_hub=false` が必須**（Hub に上げないなら）。付け忘れると `repo_id` 不足で検証エラー。上げる場合は `--policy.repo_id=<user>/<name>` + `HF_TOKEN`。
-- **再開**は `--resume=true` + `--config_path=.../checkpoints/last/pretrained_model/train_config.json` の2点セット。非 resume 実行で `output_dir` が既存だとエラー。
+- **Hub に上げない場合は何も指定しなくてよい**（`pixi run train` は `--push-repo-id` を渡さない限り `--policy.push_to_hub=false` を自動付与）。上げる場合は `--push-repo-id <name>` + `HF_TOKEN`（`pixi run hf-login`）。
+- **再開**は `pixi run train --resume <output_dir>/checkpoints/last` の1コマンドでよい（内部で `--config_path=.../pretrained_model/train_config.json --resume=true` に展開される）。非 resume 実行で同じ `output_dir` が既存だとエラーになるが、`output_dir` は実行ごとにタイムスタンプが付くため通常は衝突しない。
 
 ---
 
@@ -82,7 +83,7 @@ pixi run lerobot-train \
 ```bash
 export MUJOCO_GL=egl
 pixi run lerobot-rollout \
-  --policy.path=outputs/train/smolvla_so101_pickplace/checkpoints/last/pretrained_model \
+  --policy.path=outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
   --policy.rtc_config.enabled=true --policy.rtc_config.execution_horizon=10 \
   --robot.type=sim_so101 \
   --robot.mjcf_path=$PWD/assets/so_arm100/scene_cameras.xml \
@@ -99,7 +100,7 @@ pixi run lerobot-rollout \
 ```bash
 export MUJOCO_GL=egl
 pixi run lerobot-rollout \
-  --policy.path=outputs/train/smolvla_so101_pickplace/checkpoints/last/pretrained_model \
+  --policy.path=outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
   --policy.rtc_config.enabled=true --policy.rtc_config.execution_horizon=10 \
   --robot.type=sim_so101 \
   --robot.mjcf_path=$PWD/assets/so_arm100/scene_cameras.xml \

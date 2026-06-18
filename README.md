@@ -74,6 +74,7 @@ pixi run train \
 - A GPU is recommended (about 4 hours for 20k steps on an A100). For a quick smoke test, use `--steps 2000`.
 - `--device` accepts `cuda` / `mps` / `cpu`. Omit it for auto-detection.
 - Training output is written to `outputs/` (gitignored).
+- On a PBS-scheduled HPC, submit [`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs) instead of running the command above interactively: `qsub jobs/train_smolvla.pbs` (it wraps the same `pixi run train` invocation; override knobs like `STEPS`/`BATCH_SIZE`/`RESUME` with `qsub -v`, see comments in the script).
 
 #### Logging to W&B
 
@@ -169,6 +170,10 @@ pixi run policy-test \
   --policy outputs/train/pi0_base/svla_so101_pickplace/<timestamp>/checkpoints/last/pretrained_model \
   --repo-id lerobot/svla_so101_pickplace
 ```
+
+## MuJoCo simulation: async RTC rollout
+
+A SO-ARM100 MuJoCo model is bundled at `assets/so_arm100/` (no clone needed), with a `sim_so101` robot adapter (in the `lerobot` fork) so the hardware-only `lerobot-rollout --inference.type=rtc` (async Real-Time Chunking) path can be exercised end-to-end without a physical robot — including offscreen rendering and episode recording. See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) for the full setup/train/rollout walkthrough and RTC parameter reference.
 
 ## Troubleshooting
 

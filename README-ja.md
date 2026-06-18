@@ -74,6 +74,7 @@ pixi run train \
 - GPU推奨（A100で20kステップ約4時間）。動作確認だけしたい場合は `--steps 2000` 程度に減らすと短時間で完走します。
 - `--device` は `cuda` / `mps` / `cpu` から実機に合わせて指定。省略すると自動検出されます。
 - 学習結果は `outputs/`（gitignore済み）に出力されます。
+- PBSスケジューラのHPCでは、上記をインタラクティブに実行する代わりに [`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs) を投入できます: `qsub jobs/train_smolvla.pbs`（内部では同じ `pixi run train` を呼んでいます。`STEPS`/`BATCH_SIZE`/`RESUME` などは `qsub -v` で上書き可能。詳細はスクリプト内のコメント参照）。
 
 #### W&B でトレーニングを記録する
 
@@ -169,6 +170,10 @@ pixi run policy-test \
   --policy outputs/train/pi0_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
   --repo-id lerobot/svla_so101_pickplace
 ```
+
+## MuJoCo シミュレーション: RTC 非同期ロールアウト
+
+SO-ARM100 の MuJoCo モデルを `assets/so_arm100/` に同梱済み（clone不要）で、`sim_so101` ロボットアダプタ（`lerobot` フォーク側）と組み合わせることで、実機前提の `lerobot-rollout --inference.type=rtc`（非同期 Real-Time Chunking）経路をハードウェア無しで一通り検証できます（オフスクリーン描画・エピソード録画を含む）。セットアップ→学習→ロールアウトの手順と RTC パラメータの解説は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照してください。
 
 ## トラブルシューティング
 
