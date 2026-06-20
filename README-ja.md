@@ -150,29 +150,8 @@ pixi run train \
 - カメラ名がデータセット側で `smolvla_base` の期待する名前（`camera1`〜`camera3`）と異なる場合は `--rename_map` でマッピングします。マップに含めなかったキーは自動的に学習から除外されます。
 - 学習結果は `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（gitignore済み）に出力されます。`--job-name` はW&B上の表示名のみに使われ、ディレクトリ名には影響しません。
 
-**HPCで長時間バッチ投入したい場合** は、上記コマンドを包んだPBSスクリプトを自分で用意してください（キュー名・`group_list`・walltimeはサイトに合わせて変更。`jobs/` は `.gitignore` 済みなので、ここに置いたファイルはリポジトリにはpushされません）。テンプレート例:
+**HPCで長時間バッチ投入したい場合** は、上記コマンドを包んだPBSスクリプトを自分で用意し、`qsub -l walltime=06:00:00 -q small-g jobs/test.pbs`のように実行してください。
 
-```bash
-#!/bin/bash
-#PBS -q short-g
-#PBS -W group_list=<your-group>
-#PBS -l select=1
-#PBS -l walltime=03:00:00
-#PBS -N train_smolvla
-#PBS -j oe
-
-set -euo pipefail
-cd "${PBS_O_WORKDIR:-$(pwd)}"
-
-pixi run train \
-  --policy-path lerobot/smolvla_base \
-  --repo-id Octpus-VLA/<dataset> \
-  --batch-size 64 --steps 10000 --save-freq 2000 \
-  --job-name smolvla_so101_pickplace --device cuda \
-  -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
-```
-
-`qsub -v` で値を渡したい場合は、`DATASET_REPO="${DATASET_REPO:?DATASET_REPO is required}"` のように環境変数を読む形にラップしてください。
 
 ### 3. W&B ロギング / Hugging Face Hub へのアップロード（任意）
 
