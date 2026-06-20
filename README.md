@@ -167,10 +167,11 @@ Omitting `--wandb-project`/`--wandb-entity` logs to the default project/your per
 ```bash
 pixi run policy-test \
   --policy outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model \
-  --repo-id <repo>
+  --repo-id <repo> \
+  --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-This feeds recorded dataset frames into the fine-tuned policy and reports inference latency and the deviation from the recorded actions.
+This feeds recorded dataset frames into the fine-tuned policy and reports inference latency and the deviation from the recorded actions. If you used `--rename_map` during training, pass the same `--rename_map` here too — omitting it leaves the dataset's keys (e.g. `front`/`overall`) mismatched against what the checkpoint expects (`camera1`–`camera3`), raising `Feature mismatch between dataset/environment and policy config`.
 
 Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/smolvla)
 

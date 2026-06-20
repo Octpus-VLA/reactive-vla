@@ -167,10 +167,11 @@ pixi run train \
 ```bash
 pixi run policy-test \
   --policy outputs/train/smolvla_base/<dataset>/<タイムスタンプ>/checkpoints/last/pretrained_model \
-  --repo-id <repo>
+  --repo-id <repo> \
+  --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレを確認できます。
+データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレを確認できます。学習時に `--rename_map` でカメラ名を変換した場合は、ここでも同じ `--rename_map` を渡してください。省略するとデータセット側のキー（例: `front`/`overall`）とチェックポイントが期待するキー（`camera1`〜`camera3`）が食い違い、`Feature mismatch between dataset/environment and policy config` エラーになります。
 
 参考: [SmolVLAファインチューニングガイド](https://huggingface.co/docs/lerobot/en/smolvla)
 

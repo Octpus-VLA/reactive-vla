@@ -903,6 +903,14 @@ def policy_test(
     device: str = typer.Option(None, "--device", help="cuda / mps / cpu (auto-detected if omitted)."),
     steps: int = typer.Option(20, "--steps", help="Number of inference steps to run."),
     episode: int = typer.Option(0, "--episode", help="Episode to take frames from."),
+    rename_map: str = typer.Option(
+        None,
+        "--rename_map",
+        help="JSON dict mapping dataset observation keys to the policy's expected names "
+        "(same option as `train`/`eval`), e.g. "
+        '\'{"observation.images.front": "observation.images.camera1"}\'. Required if the '
+        "dataset's camera keys don't match what the checkpoint was fine-tuned with.",
+    ),
 ) -> None:
     """Offline inference smoke test: run the trained policy on recorded dataset frames — no robot needed.
 
@@ -920,6 +928,7 @@ def policy_test(
     dev = device or _auto_device()
     pol_path = _resolve_policy(policy)
     repo = _resolve_repo(repo_id)
+    renames = json.loads(rename_map) if rename_map else {}
 
     typer.secho(f"Loading dataset {repo} (downloads from the Hub if not cached locally)...", fg="blue")
     dataset = LeRobotDataset(repo, video_backend=_safe_video_backend())
@@ -930,12 +939,15 @@ def policy_test(
     cfg = PreTrainedConfig.from_pretrained(pol_path)
     cfg.pretrained_path = pol_path
     cfg.device = dev
-    pol = make_policy(cfg, ds_meta=dataset.meta)
+    pol = make_policy(cfg, ds_meta=dataset.meta, rename_map=renames)
     pre, post = make_pre_post_processors(
         policy_cfg=cfg,
         pretrained_path=pol_path,
         dataset_stats=dataset.meta.stats,
-        preprocessor_overrides={"device_processor": {"device": dev}},
+        preprocessor_overrides={
+            "device_processor": {"device": dev},
+            "rename_observations_processor": {"rename_map": renames},
+        },
     )
     for p in (pol, pre, post):
         if hasattr(p, "reset"):
