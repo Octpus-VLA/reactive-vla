@@ -16,9 +16,10 @@
 set -euo pipefail
 cd "${PBS_O_WORKDIR:-$(pwd)}"
 
-DATASET_REPO="${DATASET_REPO:-lerobot/svla_so101_pickplace}"
-RENAME_MAP="${RENAME_MAP:-{\"observation.images.up\": \"observation.images.camera1\", \"observation.images.side\": \"observation.images.camera2\"}}"
-STEPS="${STEPS:-20000}"
+DATASET_REPO="${DATASET_REPO:-your-hf-user/lift_red_cube_50episodes}"
+# overall カメラは学習に使わない: rename_map に含めなければ smolvla 側で自動的に無視される
+RENAME_MAP="${RENAME_MAP:-{\"observation.images.front\": \"observation.images.camera1\"}}"
+STEPS="${STEPS:-10000}"
 JOB_NAME="${JOB_NAME:-smolvla_so101_pickplace}"
 
 if [ -n "${RESUME:-}" ]; then
