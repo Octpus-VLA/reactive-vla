@@ -187,9 +187,12 @@ Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/sm
 
 ### pi0 (`lerobot/pi0_base`)
 
-Swap `--policy-path lerobot/smolvla_base` for `--policy-path lerobot/pi0_base` and the same steps apply. `--rename_map` isn't needed (pi0 reads camera names dynamically from the dataset features), and `--batch-size` should be lowered to around 4–8 given the larger model size.
+Swap `--policy-path lerobot/smolvla_base` for `--policy-path lerobot/pi0_base` and the same steps apply, with two differences.
 
-> **Known issue**: Fine-tuning currently hangs while downloading `model.safetensors`. We are investigating this issue; running pi0 is not recommended at this time.
+- **Camera names are fixed here too.** Like `smolvla_base`, `pi0_base`'s input features are fixed to `observation.images.base_0_rgb`, `left_wrist_0_rgb`, and `right_wrist_0_rgb` (the OpenPI/DROID base + two wrist cameras convention) — it does *not* dynamically read whatever camera names your dataset happens to use. If your dataset's keys differ, you need `--rename_map` (e.g. `'{"observation.images.front": "observation.images.base_0_rgb"}'`). Any expected camera you don't map is automatically padded with a masked dummy image.
+- `--batch-size` should be lowered to around 4–8 given the larger model size.
+
+> **Prerequisite**: `pi0_base`'s tokenizer uses Google's gated repo [`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224). Accept the license on that page, and if your HF token is a **fine-grained** token, enable "Read access to contents of all public gated repos you can access" under the token's **global** settings (separate from per-repo `scoped` permissions — those alone won't grant access to a gated repo outside your own namespace). A plain non-fine-grained **Read** token works too if that's simpler.
 
 ## Inference
 

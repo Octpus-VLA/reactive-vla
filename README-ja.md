@@ -173,8 +173,6 @@ pixi run policy-test \
 
 データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレ（`mean |action - recorded|`、単位は度）を確認できます。学習時に `--rename_map` でカメラ名を変換した場合は、ここでも同じ `--rename_map` を渡してください。省略するとデータセット側のキー（例: `front`/`overall`）とチェックポイントが期待するキー（`camera1`〜`camera3`）が食い違い、`Feature mismatch between dataset/environment and policy config` エラーになります。
 
-**これはあくまでオフラインの動作確認（スモークテスト）です。** デフォルトの `--episode 0` だけでなく `--episode` を変えて複数エピソードで試し、ズレが極端に大きいエピソードが無いか確認してください。再現度が低くても／高くても、それだけで「学習が上手くいっている／いっていない」と断定はできません — `--episode 0` は学習データそのものなので、低いズレは単に記憶（過学習）している可能性もあります。実際の成功率は、最終的に実機での `eval`（[推論](#推論)を参照）で確認してください。
-
 HPCでバッチ実行する場合は [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs) を使えます。
 
 ```bash
@@ -187,9 +185,12 @@ qsub -v CHECKPOINT=... -v REPO_ID=other/dataset jobs/test/smolvla.pbs
 
 ### pi0 (`lerobot/pi0_base`)
 
-`--policy-path lerobot/smolvla_base` を `--policy-path lerobot/pi0_base` に変えるだけで同じ手順が使えます。カメラ名をデータセットの特徴量から動的に受け取るため `--rename_map` は不要、モデルが大きいため `--batch-size` は4〜8程度に下げてください。
+`--policy-path lerobot/smolvla_base` を `--policy-path lerobot/pi0_base` に変えるだけで同じ手順が使えますが、2点異なります。
 
-> **既知の問題**: 現在 `model.safetensors` のダウンロード中に処理が止まる問題が確認されており、pi0 の実行は推奨しません。
+- **カメラ名も固定です。** `pi0_base` は `smolvla_base` と同様に、入力特徴量が `observation.images.base_0_rgb`・`left_wrist_0_rgb`・`right_wrist_0_rgb`（OpenPI/DROID由来のbase + wrist×2のカメラ構成）に固定されています。「データセットのカメラ名をそのまま動的に使う」わけではないので、データセット側のキー名が異なる場合は `--rename_map` が必要です（例: `'{"observation.images.front": "observation.images.base_0_rgb"}'`）。マップしなかったキーは無視され、マップされなかった残りの期待カメラはマスク付きのダミー画像で自動的に埋められます。
+- モデルが大きいため `--batch-size` は4〜8程度に下げてください。
+
+> **事前準備が必要**: `pi0_base` のトークナイザーは Google の Gated リポジトリ [`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224) を使います。そのページでライセンスに同意した上で、HFトークンが **fine-grained** タイプの場合は、個別リポジトリのスコープ設定とは別に、トークン全体の **Global** 設定で "Read access to contents of all public gated repos you can access" を有効にしてください（個別リポジトリへの `scoped` 権限だけでは他人の名前空間のGatedリポジトリには効きません）。設定が面倒な場合は fine-grained ではない通常の **Read** タイプのトークンでも構いません。
 
 ## 推論
 

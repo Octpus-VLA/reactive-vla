@@ -17,8 +17,9 @@ set -euo pipefail
 cd "${PBS_O_WORKDIR:-$(pwd)}"
 
 DATASET_REPO="${DATASET_REPO:-your-hf-user/lift_red_cube_50episodes}"
-# overall カメラは学習に使わない: rename_map に含めなければ smolvla 側で自動的に無視される
-RENAME_MAP="${RENAME_MAP:-{\"observation.images.front\": \"observation.images.camera1\"}}"
+# pi0_base の input_features は base_0_rgb/left_wrist_0_rgb/right_wrist_0_rgb に固定（smolvlaのcamera1-3と同じ仕組み）。
+# overall カメラは学習に使わない: rename_map に含めなければ自動的に無視される（不足分はマスク付きのダミー画像で埋まる）。
+RENAME_MAP="${RENAME_MAP:-{\"observation.images.front\": \"observation.images.base_0_rgb\"}}"
 STEPS="${STEPS:-10000}"
 JOB_NAME="${JOB_NAME:-pi0_so101_pickplace}"
 
