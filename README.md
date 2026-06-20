@@ -10,7 +10,7 @@ first octpus vla project repository
 
 - **SO-101 hardware CLI** (`cli/so101.py`, exposed as `pixi run <command>`) — register the leader/follower arms once, then calibrate, teleoperate, record/replay/visualize/edit datasets, and push them to the Hub. See the [command table](#so-101-commands-pixi-run-command) below. The arm registration/teleop flow (`set-port` → `setup-motors` → `calibrate` → `teleop`) follows the pattern in [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop).
 - **Imitation-learning fine-tuning** — fine-tune `smolvla_base` or `pi0_base` on a SO-101 dataset (or train a policy from scratch), with optional W&B logging and Hugging Face Hub push. See [Fine-tuning](#fine-tuning) below.
-- **HPC batch training** — submit fine-tuning as a PBS job ([`jobs/train/smolvla.pbs`](jobs/train/smolvla.pbs)) instead of running `pixi run train` interactively. The offline inference smoke test can likewise be submitted as [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs).
+- **HPC batch training** — submit fine-tuning as a PBS job instead of running `pixi run train` interactively. The PBS scripts themselves aren't included in this repo (they bake in site-specific queue/`group_list` settings) — see the template in [Fine-tuning](#fine-tuning) and drop your own under `jobs/` (gitignored).
 - **MuJoCo simulation** — a bundled SO-ARM100 model + `sim_so101` robot adapter let you exercise the async RTC rollout path without physical hardware. See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md).
 
 ### SO-101 commands (`pixi run <command>`)
@@ -139,13 +139,40 @@ qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=02:00:00
 ### 2. Run it
 
 ```bash
-qsub -v DATASET_REPO=<user>/<dataset> jobs/train/smolvla.pbs
+pixi run train \
+  --policy-path lerobot/smolvla_base \
+  --repo-id <user>/<dataset> \
+  --batch-size 64 --steps 10000 --save-freq 2000 \
+  --job-name smolvla_so101_pickplace --device cuda \
+  -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
-
-`DATASET_REPO` is required (except when resuming). `RENAME_MAP`, `STEPS`, `BATCH_SIZE`, `SAVE_FREQ`, `JOB_NAME`, and `RESUME` can likewise be overridden with `qsub -v KEY=VALUE jobs/train/smolvla.pbs` (see the comments at the top of [jobs/train/smolvla.pbs](jobs/train/smolvla.pbs)). To run interactively, you can just invoke the same `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` the script wraps.
 
 - If your dataset's camera names differ from what `smolvla_base` expects (`camera1`–`camera3`), remap them with `--rename_map`. Any key left out of the map is automatically excluded from training.
 - Training output is written to `outputs/train/<policy>/<dataset>/<timestamp>` (gitignored). `--job-name` only sets the W&B display name and has no effect on the directory.
+
+**For long HPC batch runs**, wrap the command above in your own PBS script (adjust the queue/`group_list`/walltime for your site — anything you put under `jobs/` is gitignored, so it won't get pushed). Template:
+
+```bash
+#!/bin/bash
+#PBS -q short-g
+#PBS -W group_list=<your-group>
+#PBS -l select=1
+#PBS -l walltime=03:00:00
+#PBS -N train_smolvla
+#PBS -j oe
+
+set -euo pipefail
+cd "${PBS_O_WORKDIR:-$(pwd)}"
+
+pixi run train \
+  --policy-path lerobot/smolvla_base \
+  --repo-id <user>/<dataset> \
+  --batch-size 64 --steps 10000 --save-freq 2000 \
+  --job-name smolvla_so101_pickplace --device cuda \
+  -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
+```
+
+To pass values via `qsub -v`, wrap them as env vars reading with a default/required check, e.g. `DATASET_REPO="${DATASET_REPO:?DATASET_REPO is required}"`.
 
 ### 3. W&B logging / pushing to the Hugging Face Hub (optional)
 
@@ -175,12 +202,7 @@ This feeds recorded dataset frames into the fine-tuned policy and reports infere
 
 **This is an offline smoke test, nothing more.** Don't just check the default `--episode 0` — try a few different `--episode` values and watch for any episode with an unusually large deviation. Neither a low nor a high deviation alone proves training "worked" or "failed": `--episode 0` is training data, so a low deviation could just mean the policy memorized it. Confirm real success with an on-robot `eval` run (see [Inference](#inference)).
 
-For batch runs on HPC, use [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs):
-
-```bash
-qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model -v REPO_ID=<user>/<dataset> jobs/test/smolvla.pbs
-qsub -v CHECKPOINT=... -v REPO_ID=... -v EPISODE=5 jobs/test/smolvla.pbs        # check a different episode
-```
+For batch runs on HPC, wrap the command above in your own PBS script under `jobs/` (gitignored), the same way as the training job.
 
 Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/smolvla)
 
@@ -189,7 +211,7 @@ Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/sm
 Swap `--policy-path lerobot/smolvla_base` for `--policy-path lerobot/pi0_base` and the same steps apply, with two differences.
 
 - **Camera names are fixed here too.** Like `smolvla_base`, `pi0_base`'s input features are fixed to `observation.images.base_0_rgb`, `left_wrist_0_rgb`, and `right_wrist_0_rgb` (the OpenPI/DROID base + two wrist cameras convention) — it does *not* dynamically read whatever camera names your dataset happens to use. If your dataset's keys differ, you need `--rename_map` (e.g. `'{"observation.images.front": "observation.images.base_0_rgb"}'`). Any expected camera you don't map is automatically padded with a masked dummy image.
-- `--batch-size` should be lowered to around 4–8 given the larger model size. `pi0_base` defaults to `train_expert_only=false`, `freeze_vision_encoder=false`, and `use_amp=false` (full fp32 fine-tuning of all 4B params), so weights + gradients + AdamW optimizer state (m, v) alone cost a **fixed ~64GB** (4.03B × 4 bytes × 4) regardless of batch size. So "GB per batch element" isn't a linear estimate — only the activation memory scales with batch size. Headroom depends on your GPU's VRAM, so it's worth a short trial run to find the real ceiling: `qsub -v BATCH_SIZE=6 -v STEPS=10 jobs/train/pi0.pbs`. If you need to fit a bigger batch, these flags free up memory (roughly in order of impact): `-- --policy.train_expert_only=true` (freeze the VLM, train only the action expert), `-- --policy.freeze_vision_encoder=true`, `-- --policy.gradient_checkpointing=true`, `-- --policy.use_amp=true`.
+- `--batch-size` should be lowered to around 4–8 given the larger model size. `pi0_base` defaults to `train_expert_only=false`, `freeze_vision_encoder=false`, and `use_amp=false` (full fp32 fine-tuning of all 4B params), so weights + gradients + AdamW optimizer state (m, v) alone cost a **fixed ~64GB** (4.03B × 4 bytes × 4) regardless of batch size. So "GB per batch element" isn't a linear estimate — only the activation memory scales with batch size. Headroom depends on your GPU's VRAM, so it's worth a short trial run to find the real ceiling: `pixi run train --policy-path lerobot/pi0_base --repo-id <repo> --batch-size 6 --steps 10 --device cuda -- --rename_map='{"observation.images.front": "observation.images.base_0_rgb"}'`. If you need to fit a bigger batch, these flags free up memory (roughly in order of impact): `-- --policy.train_expert_only=true` (freeze the VLM, train only the action expert), `-- --policy.freeze_vision_encoder=true`, `-- --policy.gradient_checkpointing=true`, `-- --policy.use_amp=true`.
 
 > **Prerequisite**: `pi0_base`'s tokenizer uses Google's gated repo [`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224). Accept the license on that page, and if your HF token is a **fine-grained** token, enable "Read access to contents of all public gated repos you can access" under the token's **global** settings (separate from per-repo `scoped` permissions — those alone won't grant access to a gated repo outside your own namespace). A plain non-fine-grained **Read** token works too if that's simpler. Confirmed working end-to-end with the setup above.
 
