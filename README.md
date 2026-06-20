@@ -141,7 +141,7 @@ qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=02:00:00
 ```bash
 pixi run train \
   --policy-path lerobot/smolvla_base \
-  --repo-id <user>/<dataset> \
+  --repo-id Octpus-VLA/<dataset> \
   --batch-size 64 --steps 10000 --save-freq 2000 \
   --job-name smolvla_so101_pickplace --device cuda \
   -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
@@ -166,7 +166,7 @@ cd "${PBS_O_WORKDIR:-$(pwd)}"
 
 pixi run train \
   --policy-path lerobot/smolvla_base \
-  --repo-id <user>/<dataset> \
+  --repo-id Octpus-VLA/<dataset> \
   --batch-size 64 --steps 10000 --save-freq 2000 \
   --job-name smolvla_so101_pickplace --device cuda \
   -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
@@ -181,7 +181,7 @@ pixi run wandb-login   # first time only, for W&B
 pixi run hf-login      # first time only, for Hub push
 
 pixi run train \
-  --policy-path lerobot/smolvla_base --repo-id <repo> \
+  --policy-path lerobot/smolvla_base --repo-id Octpus-VLA/<dataset> \
   --wandb --wandb-project <project> \
   --push-repo-id <name> \
   -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
@@ -194,7 +194,7 @@ Omitting `--wandb-project`/`--wandb-entity` logs to the default project/your per
 ```bash
 pixi run policy-test \
   --policy outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model \
-  --repo-id <repo> \
+  --repo-id Octpus-VLA/<dataset> \
   --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
@@ -211,7 +211,7 @@ Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/sm
 Swap `--policy-path lerobot/smolvla_base` for `--policy-path lerobot/pi0_base` and the same steps apply, with two differences.
 
 - **Camera names are fixed here too.** Like `smolvla_base`, `pi0_base`'s input features are fixed to `observation.images.base_0_rgb`, `left_wrist_0_rgb`, and `right_wrist_0_rgb` (the OpenPI/DROID base + two wrist cameras convention) — it does *not* dynamically read whatever camera names your dataset happens to use. If your dataset's keys differ, you need `--rename_map` (e.g. `'{"observation.images.front": "observation.images.base_0_rgb"}'`). Any expected camera you don't map is automatically padded with a masked dummy image.
-- `--batch-size` should be lowered to around 4–8 given the larger model size. `pi0_base` defaults to `train_expert_only=false`, `freeze_vision_encoder=false`, and `use_amp=false` (full fp32 fine-tuning of all 4B params), so weights + gradients + AdamW optimizer state (m, v) alone cost a **fixed ~64GB** (4.03B × 4 bytes × 4) regardless of batch size. So "GB per batch element" isn't a linear estimate — only the activation memory scales with batch size. Headroom depends on your GPU's VRAM, so it's worth a short trial run to find the real ceiling: `pixi run train --policy-path lerobot/pi0_base --repo-id <repo> --batch-size 6 --steps 10 --device cuda -- --rename_map='{"observation.images.front": "observation.images.base_0_rgb"}'`. If you need to fit a bigger batch, these flags free up memory (roughly in order of impact): `-- --policy.train_expert_only=true` (freeze the VLM, train only the action expert), `-- --policy.freeze_vision_encoder=true`, `-- --policy.gradient_checkpointing=true`, `-- --policy.use_amp=true`.
+- `--batch-size` should be lowered to around 4–8 given the larger model size. `pi0_base` defaults to `train_expert_only=false`, `freeze_vision_encoder=false`, and `use_amp=false` (full fp32 fine-tuning of all 4B params), so weights + gradients + AdamW optimizer state (m, v) alone cost a **fixed ~64GB** (4.03B × 4 bytes × 4) regardless of batch size. So "GB per batch element" isn't a linear estimate — only the activation memory scales with batch size. Headroom depends on your GPU's VRAM, so it's worth a short trial run to find the real ceiling: `pixi run train --policy-path lerobot/pi0_base --repo-id Octpus-VLA/<dataset> --batch-size 6 --steps 10 --device cuda -- --rename_map='{"observation.images.front": "observation.images.base_0_rgb"}'`. If you need to fit a bigger batch, these flags free up memory (roughly in order of impact): `-- --policy.train_expert_only=true` (freeze the VLM, train only the action expert), `-- --policy.freeze_vision_encoder=true`, `-- --policy.gradient_checkpointing=true`, `-- --policy.use_amp=true`.
 
 > **Prerequisite**: `pi0_base`'s tokenizer uses Google's gated repo [`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224). Accept the license on that page, and if your HF token is a **fine-grained** token, enable "Read access to contents of all public gated repos you can access" under the token's **global** settings (separate from per-repo `scoped` permissions — those alone won't grant access to a gated repo outside your own namespace). A plain non-fine-grained **Read** token works too if that's simpler. Confirmed working end-to-end with the setup above.
 
