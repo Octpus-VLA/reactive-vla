@@ -1,0 +1,34 @@
+#!/bin/bash
+# Pi0 ファインチューニング (Miyabi-G / GH200)。リポジトリ root から投入する。
+#   qsub jobs/train/pi0.pbs                          # 既定で実行
+#   qsub -v STEPS=10000 jobs/train/pi0.pbs           # knob を上書き
+#   qsub -v RESUME=outputs/train/pi0_base/pi0_so101_pickplace/<timestamp>/checkpoints/last jobs/train/pi0.pbs
+#                                                          # walltime で切れた後、最後のckptから再開
+#   qsub -l walltime=06:00:00 -q small-g jobs/train/pi0.pbs   # queue/walltime 上書き
+
+#PBS -q short-g
+#PBS -W group_list=gw13
+#PBS -l select=1
+#PBS -l walltime=03:00:00
+#PBS -N train_pi0
+#PBS -j oe
+
+set -euo pipefail
+cd "${PBS_O_WORKDIR:-$(pwd)}"
+
+DATASET_REPO="${DATASET_REPO:-your-hf-user/lift_red_cube_50episodes}"
+# overall カメラは学習に使わない: rename_map に含めなければ smolvla 側で自動的に無視される
+RENAME_MAP="${RENAME_MAP:-{\"observation.images.front\": \"observation.images.camera1\"}}"
+STEPS="${STEPS:-10000}"
+JOB_NAME="${JOB_NAME:-pi0_so101_pickplace}"
+
+if [ -n "${RESUME:-}" ]; then
+  pixi run train --resume "${RESUME}"
+else
+  pixi run train \
+    --policy-path lerobot/pi0_base \
+    --repo-id "${DATASET_REPO}" \
+    --batch-size "${BATCH_SIZE:-4}" --steps "${STEPS}" --save-freq "${SAVE_FREQ:-2000}" \
+    --job-name "${JOB_NAME}" --device cuda \
+    -- --rename_map="${RENAME_MAP}"
+fi

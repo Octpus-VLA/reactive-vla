@@ -10,7 +10,7 @@ first octpus vla project repository
 
 - **SO-101 hardware CLI** (`cli/so101.py`, exposed as `pixi run <command>`) — register the leader/follower arms once, then calibrate, teleoperate, record/replay/visualize/edit datasets, and push them to the Hub. See the [command table](#so-101-commands-pixi-run-command) below. The arm registration/teleop flow (`set-port` → `setup-motors` → `calibrate` → `teleop`) follows the pattern in [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop).
 - **Imitation-learning fine-tuning** — fine-tune `smolvla_base` or `pi0_base` on a SO-101 dataset (or train a policy from scratch), with optional W&B logging and Hugging Face Hub push. See [Fine-tuning](#fine-tuning) below.
-- **HPC batch training** — submit fine-tuning as a PBS job ([`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs)) instead of running `pixi run train` interactively.
+- **HPC batch training** — submit fine-tuning as a PBS job ([`jobs/train/smolvla.pbs`](jobs/train/smolvla.pbs)) instead of running `pixi run train` interactively. The offline inference smoke test can likewise be submitted as [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs).
 - **MuJoCo simulation** — a bundled SO-ARM100 model + `sim_so101` robot adapter let you exercise the async RTC rollout path without physical hardware. See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md).
 
 ### SO-101 commands (`pixi run <command>`)
@@ -139,10 +139,10 @@ qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=02:00:00
 ### 2. Run it
 
 ```bash
-qsub jobs/train_smolvla.pbs
+qsub jobs/train/smolvla.pbs
 ```
 
-`DATASET_REPO`, `RENAME_MAP`, `STEPS`, `BATCH_SIZE`, `SAVE_FREQ`, `JOB_NAME`, and `RESUME` can be overridden with `qsub -v KEY=VALUE jobs/train_smolvla.pbs` (see the comments at the top of [jobs/train_smolvla.pbs](jobs/train_smolvla.pbs)). To run interactively, you can just invoke the same `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` the script wraps.
+`DATASET_REPO`, `RENAME_MAP`, `STEPS`, `BATCH_SIZE`, `SAVE_FREQ`, `JOB_NAME`, and `RESUME` can be overridden with `qsub -v KEY=VALUE jobs/train/smolvla.pbs` (see the comments at the top of [jobs/train/smolvla.pbs](jobs/train/smolvla.pbs)). To run interactively, you can just invoke the same `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` the script wraps.
 
 - If your dataset's camera names differ from what `smolvla_base` expects (`camera1`–`camera3`), remap them with `--rename_map`. Any key left out of the map is automatically excluded from training.
 - Training output is written to `outputs/train/<policy>/<dataset>/<timestamp>` (gitignored). `--job-name` only sets the W&B display name and has no effect on the directory.
@@ -171,7 +171,17 @@ pixi run policy-test \
   --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-This feeds recorded dataset frames into the fine-tuned policy and reports inference latency and the deviation from the recorded actions. If you used `--rename_map` during training, pass the same `--rename_map` here too — omitting it leaves the dataset's keys (e.g. `front`/`overall`) mismatched against what the checkpoint expects (`camera1`–`camera3`), raising `Feature mismatch between dataset/environment and policy config`.
+This feeds recorded dataset frames into the fine-tuned policy and reports inference latency and the deviation from the recorded actions (`mean |action - recorded|`, in degrees). If you used `--rename_map` during training, pass the same `--rename_map` here too — omitting it leaves the dataset's keys (e.g. `front`/`overall`) mismatched against what the checkpoint expects (`camera1`–`camera3`), raising `Feature mismatch between dataset/environment and policy config`.
+
+**This is an offline smoke test, nothing more.** Don't just check the default `--episode 0` — try a few different `--episode` values and watch for any episode with an unusually large deviation. Neither a low nor a high deviation alone proves training "worked" or "failed": `--episode 0` is training data, so a low deviation could just mean the policy memorized it. Confirm real success with an on-robot `eval` run (see [Inference](#inference)).
+
+For batch runs on HPC, use [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs):
+
+```bash
+qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model jobs/test/smolvla.pbs
+qsub -v CHECKPOINT=... -v EPISODE=5 jobs/test/smolvla.pbs        # check a different episode
+qsub -v CHECKPOINT=... -v REPO_ID=other/dataset jobs/test/smolvla.pbs
+```
 
 Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/smolvla)
 

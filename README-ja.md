@@ -10,7 +10,7 @@ first octpus vla project repository
 
 - **SO-101 実機操作 CLI**（`cli/so101.py`、`pixi run <command>` として公開）— leader/follower アームを一度登録すれば、以降はキャリブレーション・テレオペ・データセットの記録/再生/可視化/編集・Hubへのアップロードまで行えます。詳細は下記の[コマンド一覧](#so-101-コマンド-pixi-run-command)を参照。アーム登録・テレオペの流れ（`set-port` → `setup-motors` → `calibrate` → `teleop`）は [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop) を参考にしています。
 - **模倣学習ファインチューニング** — SO-101 データセットで `smolvla_base` / `pi0_base` をファインチューニング（またはスクラッチ学習）。W&Bロギング・Hugging Face Hubへのpushにも対応。詳細は下記の[ファインチューニング](#ファインチューニング)を参照。
-- **HPCバッチ学習** — `pixi run train` をインタラクティブに実行する代わりに、PBSジョブ（[`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs)）として投入できます。
+- **HPCバッチ学習** — `pixi run train` をインタラクティブに実行する代わりに、PBSジョブ（[`jobs/train/smolvla.pbs`](jobs/train/smolvla.pbs)）として投入できます。学習後のオフライン推論テストも同様に [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs) として投入できます。
 - **MuJoCoシミュレーション** — 同梱の SO-ARM100 モデルと `sim_so101` ロボットアダプタにより、実機無しで RTC 非同期ロールアウト経路を検証できます。詳細は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照。
 
 ### SO-101 コマンド （`pixi run <command>`）
@@ -139,10 +139,10 @@ qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=02:00:00
 ### 2. 実行
 
 ```bash
-qsub jobs/train_smolvla.pbs
+qsub jobs/train/smolvla.pbs
 ```
 
-`DATASET_REPO`・`RENAME_MAP`・`STEPS`・`BATCH_SIZE`・`SAVE_FREQ`・`JOB_NAME`・`RESUME` は `qsub -v KEY=VALUE jobs/train_smolvla.pbs` で上書きできます（詳細は [jobs/train_smolvla.pbs](jobs/train_smolvla.pbs) 冒頭のコメント参照）。インタラクティブに動かしたいときは、スクリプト内と同じ `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` をそのまま叩いても構いません。
+`DATASET_REPO`・`RENAME_MAP`・`STEPS`・`BATCH_SIZE`・`SAVE_FREQ`・`JOB_NAME`・`RESUME` は `qsub -v KEY=VALUE jobs/train/smolvla.pbs` で上書きできます（詳細は [jobs/train/smolvla.pbs](jobs/train/smolvla.pbs) 冒頭のコメント参照）。インタラクティブに動かしたいときは、スクリプト内と同じ `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` をそのまま叩いても構いません。
 
 - カメラ名がデータセット側で `smolvla_base` の期待する名前（`camera1`〜`camera3`）と異なる場合は `--rename_map` でマッピングします。マップに含めなかったキーは自動的に学習から除外されます。
 - 学習結果は `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（gitignore済み）に出力されます。`--job-name` はW&B上の表示名のみに使われ、ディレクトリ名には影響しません。
@@ -171,7 +171,17 @@ pixi run policy-test \
   --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレを確認できます。学習時に `--rename_map` でカメラ名を変換した場合は、ここでも同じ `--rename_map` を渡してください。省略するとデータセット側のキー（例: `front`/`overall`）とチェックポイントが期待するキー（`camera1`〜`camera3`）が食い違い、`Feature mismatch between dataset/environment and policy config` エラーになります。
+データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレ（`mean |action - recorded|`、単位は度）を確認できます。学習時に `--rename_map` でカメラ名を変換した場合は、ここでも同じ `--rename_map` を渡してください。省略するとデータセット側のキー（例: `front`/`overall`）とチェックポイントが期待するキー（`camera1`〜`camera3`）が食い違い、`Feature mismatch between dataset/environment and policy config` エラーになります。
+
+**これはあくまでオフラインの動作確認（スモークテスト）です。** デフォルトの `--episode 0` だけでなく `--episode` を変えて複数エピソードで試し、ズレが極端に大きいエピソードが無いか確認してください。再現度が低くても／高くても、それだけで「学習が上手くいっている／いっていない」と断定はできません — `--episode 0` は学習データそのものなので、低いズレは単に記憶（過学習）している可能性もあります。実際の成功率は、最終的に実機での `eval`（[推論](#推論)を参照）で確認してください。
+
+HPCでバッチ実行する場合は [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs) を使えます。
+
+```bash
+qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<タイムスタンプ>/checkpoints/last/pretrained_model jobs/test/smolvla.pbs
+qsub -v CHECKPOINT=... -v EPISODE=5 jobs/test/smolvla.pbs        # 別のエピソードで確認
+qsub -v CHECKPOINT=... -v REPO_ID=other/dataset jobs/test/smolvla.pbs
+```
 
 参考: [SmolVLAファインチューニングガイド](https://huggingface.co/docs/lerobot/en/smolvla)
 
