@@ -10,6 +10,15 @@ version = "0.1.0"
 # conda env側のlibを優先させてGLIBCXX_3.4.30以降を要求するffmpeg/torchcodec等のロードを通す。
 LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
 
+[target.linux.activation.env]
+# HPC (NVIDIA module) が CC/CXX を nvc に向けると、PyPI の evdev 等の C 拡張ビルドが失敗する。
+CC = "gcc"
+CXX = "g++"
+
+[target.linux.dependencies]
+# evdev は pynput (lerobot[hardware]) の Linux 依存。conda 版を使いソースビルドを避ける。
+evdev = "1.9.*"
+
 [tasks]
 fmt = "ruff format ."
 lint = "ruff check ."
@@ -58,6 +67,10 @@ ffmpeg = "*"
 lerobot = { path = "third_party/lerobot", editable = true, extras = ["feetech", "training", "smolvla", "hardware", "viz"] }
 torchcodec = ">=0.11.1, <0.12"
 mujoco = ">=3.9.0, <4"
+peft = ">=0.19.1, <0.20"
+diffusers = ">=0.38.0, <0.39"
+timm = ">=1.0.27, <2"
+dm-tree = ">=0.1.10, <0.2"
 
 # --- Docs site (MkDocs Material) ---------------------------------------------
 # torch/lerobot を含めない軽量環境。ローカル: pixi run -e docs docs-serve
