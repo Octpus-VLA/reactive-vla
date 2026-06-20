@@ -55,7 +55,7 @@ ffmpeg = "*"
 
 
 [pypi-dependencies]
-lerobot = { path = "third_party/lerobot", editable = true, extras = ["feetech", "training", "smolvla", "hardware"] }
+lerobot = { path = "third_party/lerobot", editable = true, extras = ["feetech", "training", "smolvla", "hardware", "viz"] }
 torchcodec = ">=0.11.1, <0.12"
 mujoco = ">=3.9.0, <4"
 
