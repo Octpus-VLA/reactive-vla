@@ -1,7 +1,7 @@
 #!/bin/bash
 # SmolVLA ファインチューニング (Miyabi-G / GH200)。リポジトリ root から投入する。
-#   qsub jobs/train/smolvla.pbs                          # 既定で実行
-#   qsub -v STEPS=10000 jobs/train/smolvla.pbs           # knob を上書き
+#   qsub -v DATASET_REPO=<user>/<dataset> jobs/train/smolvla.pbs   # 既定で実行
+#   qsub -v DATASET_REPO=... -v STEPS=10000 jobs/train/smolvla.pbs # knob を上書き
 #   qsub -v RESUME=outputs/train/smolvla_base/svla_so101_pickplace/<timestamp>/checkpoints/last jobs/train/smolvla.pbs
 #                                                          # walltime で切れた後、最後のckptから再開
 #   qsub -l walltime=06:00:00 -q small-g jobs/train/smolvla.pbs   # queue/walltime 上書き
@@ -18,7 +18,12 @@
 set -euo pipefail
 cd "${PBS_O_WORKDIR:-$(pwd)}"
 
-DATASET_REPO="${DATASET_REPO:-your-hf-user/lift_red_cube_50episodes}"
+if [ -z "${DATASET_REPO:-}" ] && [ -z "${RESUME:-}" ]; then
+  echo "DATASET_REPO is required, e.g.:" >&2
+  echo "  qsub -v DATASET_REPO=<user>/<dataset> jobs/train/smolvla.pbs" >&2
+  exit 1
+fi
+
 # overall カメラは学習に使わない: rename_map に含めなければ smolvla 側で自動的に無視される
 RENAME_MAP="${RENAME_MAP:-{\"observation.images.front\": \"observation.images.camera1\"}}"
 STEPS="${STEPS:-10000}"

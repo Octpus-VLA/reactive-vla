@@ -139,10 +139,10 @@ qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=02:00:00
 ### 2. Run it
 
 ```bash
-qsub jobs/train/smolvla.pbs
+qsub -v DATASET_REPO=<user>/<dataset> jobs/train/smolvla.pbs
 ```
 
-`DATASET_REPO`, `RENAME_MAP`, `STEPS`, `BATCH_SIZE`, `SAVE_FREQ`, `JOB_NAME`, and `RESUME` can be overridden with `qsub -v KEY=VALUE jobs/train/smolvla.pbs` (see the comments at the top of [jobs/train/smolvla.pbs](jobs/train/smolvla.pbs)). To run interactively, you can just invoke the same `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` the script wraps.
+`DATASET_REPO` is required (except when resuming). `RENAME_MAP`, `STEPS`, `BATCH_SIZE`, `SAVE_FREQ`, `JOB_NAME`, and `RESUME` can likewise be overridden with `qsub -v KEY=VALUE jobs/train/smolvla.pbs` (see the comments at the top of [jobs/train/smolvla.pbs](jobs/train/smolvla.pbs)). To run interactively, you can just invoke the same `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` the script wraps.
 
 - If your dataset's camera names differ from what `smolvla_base` expects (`camera1`–`camera3`), remap them with `--rename_map`. Any key left out of the map is automatically excluded from training.
 - Training output is written to `outputs/train/<policy>/<dataset>/<timestamp>` (gitignored). `--job-name` only sets the W&B display name and has no effect on the directory.
@@ -178,9 +178,8 @@ This feeds recorded dataset frames into the fine-tuned policy and reports infere
 For batch runs on HPC, use [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs):
 
 ```bash
-qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model jobs/test/smolvla.pbs
-qsub -v CHECKPOINT=... -v EPISODE=5 jobs/test/smolvla.pbs        # check a different episode
-qsub -v CHECKPOINT=... -v REPO_ID=other/dataset jobs/test/smolvla.pbs
+qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model -v REPO_ID=<user>/<dataset> jobs/test/smolvla.pbs
+qsub -v CHECKPOINT=... -v REPO_ID=... -v EPISODE=5 jobs/test/smolvla.pbs        # check a different episode
 ```
 
 Reference: [SmolVLA fine-tuning guide](https://huggingface.co/docs/lerobot/en/smolvla)

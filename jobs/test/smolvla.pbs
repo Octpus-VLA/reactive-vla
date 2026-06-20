@@ -2,9 +2,8 @@
 # SmolVLA オフライン推論スモークテスト (Miyabi-G / GH200)。
 # `jobs/train/smolvla.pbs` で学習したチェックポイントが、記録済みデータセットのフレームを
 # どれだけ再現できるか（pixi run policy-test）を確認する。ロボット不要。リポジトリrootから投入する。
-#   qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model jobs/test/smolvla.pbs
-#   qsub -v CHECKPOINT=... -v EPISODE=5 jobs/test/smolvla.pbs            # 別のエピソードで確認（過学習チェック）
-#   qsub -v CHECKPOINT=... -v REPO_ID=other/dataset jobs/test/smolvla.pbs
+#   qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model -v REPO_ID=<user>/<dataset> jobs/test/smolvla.pbs
+#   qsub -v CHECKPOINT=... -v REPO_ID=... -v EPISODE=5 jobs/test/smolvla.pbs   # 別のエピソードで確認（過学習チェック）
 
 #PBS -q short-g
 #PBS -W group_list=gw13
@@ -16,13 +15,12 @@
 set -euo pipefail
 cd "${PBS_O_WORKDIR:-$(pwd)}"
 
-if [ -z "${CHECKPOINT:-}" ]; then
-  echo "CHECKPOINT is required, e.g.:" >&2
-  echo "  qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model jobs/test/smolvla.pbs" >&2
+if [ -z "${CHECKPOINT:-}" ] || [ -z "${REPO_ID:-}" ]; then
+  echo "CHECKPOINT and REPO_ID are required, e.g.:" >&2
+  echo "  qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<timestamp>/checkpoints/last/pretrained_model -v REPO_ID=<user>/<dataset> jobs/test/smolvla.pbs" >&2
   exit 1
 fi
 
-REPO_ID="${REPO_ID:-your-hf-user/lift_red_cube_50episodes}"
 # overall カメラは学習に使わない: train時と同じrename_mapを渡さないと Feature mismatch エラーになる
 RENAME_MAP="${RENAME_MAP:-{\"observation.images.front\": \"observation.images.camera1\"}}"
 EPISODE="${EPISODE:-0}"

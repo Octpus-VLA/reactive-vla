@@ -139,10 +139,10 @@ qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=02:00:00
 ### 2. 実行
 
 ```bash
-qsub jobs/train/smolvla.pbs
+qsub -v DATASET_REPO=<user>/<dataset> jobs/train/smolvla.pbs
 ```
 
-`DATASET_REPO`・`RENAME_MAP`・`STEPS`・`BATCH_SIZE`・`SAVE_FREQ`・`JOB_NAME`・`RESUME` は `qsub -v KEY=VALUE jobs/train/smolvla.pbs` で上書きできます（詳細は [jobs/train/smolvla.pbs](jobs/train/smolvla.pbs) 冒頭のコメント参照）。インタラクティブに動かしたいときは、スクリプト内と同じ `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` をそのまま叩いても構いません。
+`DATASET_REPO` は必須です（`--resume` 時を除く）。`RENAME_MAP`・`STEPS`・`BATCH_SIZE`・`SAVE_FREQ`・`JOB_NAME`・`RESUME` も同様に `qsub -v KEY=VALUE jobs/train/smolvla.pbs` で上書きできます（詳細は [jobs/train/smolvla.pbs](jobs/train/smolvla.pbs) 冒頭のコメント参照）。インタラクティブに動かしたいときは、スクリプト内と同じ `pixi run train --policy-path lerobot/smolvla_base --repo-id <repo> ... -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'` をそのまま叩いても構いません。
 
 - カメラ名がデータセット側で `smolvla_base` の期待する名前（`camera1`〜`camera3`）と異なる場合は `--rename_map` でマッピングします。マップに含めなかったキーは自動的に学習から除外されます。
 - 学習結果は `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（gitignore済み）に出力されます。`--job-name` はW&B上の表示名のみに使われ、ディレクトリ名には影響しません。
@@ -176,9 +176,8 @@ pixi run policy-test \
 HPCでバッチ実行する場合は [`jobs/test/smolvla.pbs`](jobs/test/smolvla.pbs) を使えます。
 
 ```bash
-qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<タイムスタンプ>/checkpoints/last/pretrained_model jobs/test/smolvla.pbs
-qsub -v CHECKPOINT=... -v EPISODE=5 jobs/test/smolvla.pbs        # 別のエピソードで確認
-qsub -v CHECKPOINT=... -v REPO_ID=other/dataset jobs/test/smolvla.pbs
+qsub -v CHECKPOINT=outputs/train/smolvla_base/<dataset>/<タイムスタンプ>/checkpoints/last/pretrained_model -v REPO_ID=<user>/<dataset> jobs/test/smolvla.pbs
+qsub -v CHECKPOINT=... -v REPO_ID=... -v EPISODE=5 jobs/test/smolvla.pbs        # 別のエピソードで確認
 ```
 
 参考: [SmolVLAファインチューニングガイド](https://huggingface.co/docs/lerobot/en/smolvla)

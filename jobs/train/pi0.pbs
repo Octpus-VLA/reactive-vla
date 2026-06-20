@@ -1,7 +1,7 @@
 #!/bin/bash
 # Pi0 ファインチューニング (Miyabi-G / GH200)。リポジトリ root から投入する。
-#   qsub jobs/train/pi0.pbs                          # 既定で実行
-#   qsub -v STEPS=10000 jobs/train/pi0.pbs           # knob を上書き
+#   qsub -v DATASET_REPO=<user>/<dataset> jobs/train/pi0.pbs        # 既定で実行
+#   qsub -v DATASET_REPO=... -v STEPS=10000 jobs/train/pi0.pbs      # knob を上書き
 #   qsub -v RESUME=outputs/train/pi0_base/pi0_so101_pickplace/<timestamp>/checkpoints/last jobs/train/pi0.pbs
 #                                                          # walltime で切れた後、最後のckptから再開
 #   qsub -l walltime=06:00:00 -q small-g jobs/train/pi0.pbs   # queue/walltime 上書き
@@ -16,7 +16,12 @@
 set -euo pipefail
 cd "${PBS_O_WORKDIR:-$(pwd)}"
 
-DATASET_REPO="${DATASET_REPO:-your-hf-user/lift_red_cube_50episodes}"
+if [ -z "${DATASET_REPO:-}" ] && [ -z "${RESUME:-}" ]; then
+  echo "DATASET_REPO is required, e.g.:" >&2
+  echo "  qsub -v DATASET_REPO=<user>/<dataset> jobs/train/pi0.pbs" >&2
+  exit 1
+fi
+
 # pi0_base の input_features は base_0_rgb/left_wrist_0_rgb/right_wrist_0_rgb に固定（smolvlaのcamera1-3と同じ仕組み）。
 # overall カメラは学習に使わない: rename_map に含めなければ自動的に無視される（不足分はマスク付きのダミー画像で埋まる）。
 RENAME_MAP="${RENAME_MAP:-{\"observation.images.front\": \"observation.images.base_0_rgb\"}}"
@@ -29,7 +34,7 @@ else
   pixi run train \
     --policy-path lerobot/pi0_base \
     --repo-id "${DATASET_REPO}" \
-    --batch-size "${BATCH_SIZE:-4}" --steps "${STEPS}" --save-freq "${SAVE_FREQ:-2000}" \
+    --batch-size "${BATCH_SIZE:-8}" --steps "${STEPS}" --save-freq "${SAVE_FREQ:-2000}" \
     --job-name "${JOB_NAME}" --device cuda \
     -- --rename_map="${RENAME_MAP}"
 fi
