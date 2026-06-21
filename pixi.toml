@@ -10,15 +10,6 @@ version = "0.1.0"
 # conda env側のlibを優先させてGLIBCXX_3.4.30以降を要求するffmpeg/torchcodec等のロードを通す。
 LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
 
-[target.linux.activation.env]
-# HPC (NVIDIA module) が CC/CXX を nvc に向けると、PyPI の evdev 等の C 拡張ビルドが失敗する。
-CC = "gcc"
-CXX = "g++"
-
-[target.linux.dependencies]
-# evdev は pynput (lerobot[hardware]) の Linux 依存。conda 版を使いソースビルドを避ける。
-evdev = "1.9.*"
-
 [tasks]
 fmt = "ruff format ."
 lint = "ruff check ."
