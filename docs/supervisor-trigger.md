@@ -1,164 +1,182 @@
 # Supervisor トリガによる動的 replan
 
-`overall` カメラを supervisor として監視し、検出イベントが起きた瞬間に
-キュー残量に関係なく再推論（replan）を割り込み発火させる機構の設計・実装メモ。
+このメモは、ベルトコンベア上を移動する cube を SO-101 で pick するための反応性を、段階的に整理するものです。ここで使う Tier 1/2/3 は LeRobot の既存 API 名ではなく、このプロジェクト内で replan 機構を説明するための設計上の分類です。
 
-!!! success "ステータス"
-    実装済み（v1）。`third_party/lerobot`（submodule）に実装。動き検出（フレーム差分）+ CLI 引数 + 早期 replan のみ。
+## 背景
 
-## 背景と課題
+SmolVLA のような VLA policy は、観測画像と言語指示から action chunk を生成します。通常の async inference では、action queue の残量が少なくなったタイミングで次の observation を送って replan します。
 
-SO-101 は real-time action chunking（RTC）+ async inference で動かしている。
-標準の LeRobot async inference では、再推論の発火タイミングは
-**キュー残量ベースの固定しきい値 `chunk_size_threshold`** だけで決まる
-（[`robot_client.py`](https://github.com/Octpus-VLA/reactive-vla/blob/main/third_party/lerobot/src/lerobot/async_inference/robot_client.py) の `_ready_to_send_observation()`）。
+静的な pick task ではこの方式で十分ですが、ベルトコンベア上の cube は policy が古い chunk を実行している間にも移動します。queue がまだ残っている場合、cube が把持位置からずれても robot は古い chunk を実行し続けるため、反応が遅れます。
+
+## 反応性の3階層
+
+### Tier 1: queue-based replan
+
+既存の baseline です。
+
+```text
+action queue の残量 <= chunk_size_threshold
+-> 現在の observation を policy server に送る
+-> 新しい action chunk を受け取る
+```
+
+機能:
+
+- action chunk が尽きる前に次の chunk を補充する
+- camera の変化や object の動きは見ない
+- 安定しているが、動く cube への反応は queue threshold に制限される
+
+今回の作業では Tier 1 の実装は変更しません。
+
+### Tier 2: event-triggered early replan
+
+今回の実装対象です。camera を supervisor として別スレッドで監視し、検出イベントが起きたら queue 残量とは独立に replan を先制発火させます。
+
+```text
+supervisor thread が camera の latest frame を読む
+-> detector がイベントを検出する
+-> trigger flag を立てる
+-> RobotClient が queue 条件と trigger 条件を OR する
+-> queue が十分残っていても observation を送る
+```
+
+replan 条件は概念的に次の形になります。
 
 ```python
-self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
+should_replan = queue_below_threshold or supervisor_triggered
 ```
 
-この固定カデンスは「キューがどれだけ減ったか」で発火するため、
-**世界が変化した瞬間とは無相関**。ベルトコンベアの速度急変や物体の突発的な
-移動のような動的タスクでは、変化への反応が一拍遅れる。
+v1 の detector は frame difference による motion detector です。連続フレームを grayscale 化し、輝度差が一定以上の pixel 比率が `supervisor_motion_threshold` を超えたら trigger します。
 
-しきい値を上げれば全区間で頻繁に replan できるが、
+機能:
 
-- replan レートは 1 チャンクの推論時間 `d` で頭打ち（`d` より速くできない）
-- 一様に頻繁化するとチャンク境界が増えて mode-jumping（ガタつき）が悪化
+- camera の急な変化に反応して早期 replan する
+- `chunk_size_threshold` は固定のまま使う
+- 既存挙動を壊さないため、デフォルトは無効
+- 物体の種類や速度はまだ推定しない
 
-という代償がある。そこで **定常時は既存しきい値のまま滑らかに、イベント時だけ
-即発火** という非対称な制御（後述 Tier 2）を入れる。
+実装は `third_party/lerobot` 側にあります。
 
-## 反応性の 3 階層（位置づけ）
+- `src/lerobot/async_inference/supervisor.py`: `MotionDetector` と `SupervisorMonitor`
+- `src/lerobot/async_inference/configs.py`: supervisor 用 config
+- `src/lerobot/async_inference/robot_client.py`: queue threshold と supervisor trigger の統合
 
-| Tier | 機構 | レイテンシ | 本機構の対象 |
-|------|------|-----------|--------------|
-| 1 | 毎ステップの軽量補正（replan しない） | ~1 制御ステップ | 対象外（将来） |
-| 2 | **イベント先制 replan（本機構）** | ~`d` | **対象** |
-| 3 | サーバ側 cancellable 推論 | 残り `d` を節約 | 対象外（将来） |
+### Tier 3 v1: speed-adaptive replan
 
-サーバは現状シングルスレッドのブロッキング推論で、生成中チャンクの中断は不可
-（Tier 3 にはサーバ改造が必要）。本機構は **クライアント側だけで完結する Tier 2**。
+次の段階として、detector が単に「画面が動いた」ことを返すのではなく、赤い cube の位置と画像平面上の速度を推定し、速度に応じて replan timing を動的に調整します。
 
-## 決定した要件
+v1 では、`overall` camera の RGB frame に対して HSV の red mask を作り、mask centroid の移動量から `speed_px_s` を推定します。赤は hue の 0/360 度境界をまたぐため、red mask は両端の hue range を受け入れます。
 
-2026-06-20 にユーザーと確定。
+実装済みの detector output:
 
-| 項目 | 決定 | 備考 |
-|------|------|------|
-| 検出ロジック（v1） | **動き検出（フレーム差分）** | 追加依存なし。`detect_fn` として差し替え可能な設計にする |
-| パラメータの扱い | **CLI 引数で設定可能** | `RobotClientConfig` に追加。デフォルト無効で既存コマンドに非干渉 |
-| トリガ発火時の既存 chunk | **通常通り（早期 replan のみ）** | 既存 `aggregate_fn` でマージ。flush はしない |
-| 監視カメラ | `overall` | `front` は policy 入力、`overall` を supervisor に使う |
-| 発火経路 | ゲートに `or supervisor.consume_trigger()` を OR | しきい値は書き換えない |
-
-### スコープ外（将来課題）
-
-- YOLO + IoU 等の物体検出ベース trigger（重い依存を伴うため v2 以降）
-- 大擾乱時の chunk flush（RTC 凍結 prefix の温存が必要で複雑）
-- Tier 1 の毎ステップ補正ヘッド / Tier 3 のサーバ側 cancellable 推論
-
-## アーキテクチャ概要
-
-```
-overall cam ──背景スレッドで常時更新──► バッファ
-                                          │ read_latest()（ノンブロッキング）
-                                          ▼
-                          SupervisorMonitor._loop（独立周期, 既定 20Hz）
-                            detect_fn(frame) == True かつ cooldown 経過
-                                          │ trigger.set()
-                                          ▼
-control_loop（fps）── _ready_to_send_observation()
-        = (qsize/chunk <= threshold)  OR  supervisor.consume_trigger()
-                                          │ True
-                                          ▼
-        control_loop_observation() → send_observation → サーバ推論 → 新 chunk
+```python
+DetectorOutput(
+    replan_now=True,
+    center_px=(x, y),
+    speed_px_s=180.0,
+    effective_chunk_size_threshold=0.7,
+    reason="red_cube_speed",
+)
 ```
 
-ポイント:
+機能:
 
-- supervisor は **制御ループ・policy パイプラインから独立したスレッド**で動き、
-  `camera.read_latest()` で `overall` の最新フレームをノンブロッキングに覗くだけ。
-  制御ループの fps 予算もカメラ HW も奪わない。
-- 検出が連続しても **cooldown により 1 イベント 1 発火**に制限し、観測フラッディングを防ぐ。
-- しきい値は不変なので、定常時の挙動は従来どおり。
+- 赤い cube を HSV mask で追跡する
+- mask centroid の移動から `speed_px_s` を推定する
+- cube が速いほど `effective_chunk_size_threshold` を大きくし、queue が多めに残っている段階で observation を送る
+- `supervisor_urgent_speed_px_s` を超えた場合は、queue 残量に関係なく即時 replan を発火する
+- 既存挙動を壊さないため、デフォルトは従来の `motion` detector のまま
 
-## 実装箇所
+概念例:
 
-すべて `third_party/lerobot/src/lerobot/async_inference/` 配下。
+```text
+cube が遅い -> 低めの chunk_size_threshold で安定寄り
+cube が速い -> 高めの chunk_size_threshold で早めに replan
+cube が urgent speed を超える -> queue 残量に関係なく urgent replan
+```
 
-### `supervisor.py`（新規）
+ただし、v1 はまだ grasp zone への到達時刻予測や本当の dynamic action horizon 変更は行いません。まずは camera speed から replan timing を動的に変える最小閉ループです。
 
-- `MotionDetector` — フレーム差分の動き検出器。連続フレームをグレースケール化し、
-  画素強度が `PIXEL_DIFF_THRESHOLD`（=25）以上変化した画素の割合が
-  `motion_area_threshold` を超えたら `True`。numpy のみで追加依存なし。
-  `detect_fn: Callable[[NDArray], bool]` として差し替え可能。
-- `SupervisorMonitor` — 独立スレッドで `camera.read_latest()` を `poll_fps` 周期で覗き、
-  `detect_fn` が発火しかつ `cooldown_s` 経過していれば `threading.Event` を立てる。
-  `consume_trigger()` は立っていれば `True` を返してクリア（1 検出 1 発火）。
+## 2026-06-20 時点の確定要件
 
-### `configs.py`
+- `overall` camera を supervisor 用 camera として監視できること
+- 検出イベントが発生したら、queue 残量に依存せず observation 送信を発火できること
+- 既存の async inference 挙動に影響しないよう、デフォルトでは無効であること
+- v1 は frame difference のみを使い、YOLO や cube speed predictor は含めないこと
+- Tier 3 の dynamic chunk / horizon は将来課題として明確に分離すること
 
-`RobotClientConfig` に `supervisor_*` フィールドを追加（draccus CLI 引数として露出）。
-`__post_init__` で `supervisor_enabled` 時のみ範囲バリデーション。`to_dict()` にも反映。
+## 2026-06-21 時点の Tier 3 v1 追加
 
-### `robot_client.py`
+- 赤い cube を HSV mask で検出する `red_cube_speed` detector を追加
+- `DetectorOutput` に `center_px`、`speed_px_s`、`effective_chunk_size_threshold`、`replan_now` を持たせる
+- `RobotClient` が detector output を読み、速度に応じて一時的な replan threshold を使う
+- 速度が urgent threshold を超えた場合は event-triggered replan として即発火する
+- dynamic horizon、queue flush、YOLO、grasp-zone 到達予測はまだ future work
 
-| 箇所 | 変更 |
-|------|------|
-| `__init__` | `supervisor_enabled` なら `SupervisorMonitor` を生成（`self.robot.cameras[camera]` を渡す）。無効時は `self.supervisor = None` |
-| `_ready_to_send_observation()` | `queue_ready` を early return し、`return self.supervisor is not None and self.supervisor.consume_trigger()` を追加。**しきい値は不変** |
-| `stop()` | `self.supervisor.stop()` を追加 |
-| `async_client()` | receiver スレッド起動の直後に `client.supervisor.start()` |
+## 設定例
 
-## 検証結果
-
-- `ruff check` / `ruff format --check`：全ファイル pass。
-- `MotionDetector`：初回フレーム=False、静止=False、大きな変化=True を単体確認。
-- `mkdocs build --strict`：成功（ja/en 両ビルド、本ページを nav 追加済み）。
-- 注：オフラインのテスト環境は `async` extra（grpcio）未導入かつ torch/torchvision の
-  ABI 不一致があり、`async_inference` パッケージのフル import は不可。これは既存コードにも
-  共通する環境要因で、本変更とは無関係（`py_compile` は全ファイル通過）。実機・実行時環境での
-  通し確認は下記手順で行う。
-
-## 設定（CLI 引数）
-
-| 引数 | 既定値 | 説明 |
-|------|--------|------|
-| `--supervisor_enabled` | `False` | supervisor 監視の有効化 |
-| `--supervisor_camera` | `overall` | 監視に使うカメラキー |
-| `--supervisor_poll_fps` | `20` | 監視ループの周期（Hz） |
-| `--supervisor_cooldown_s` | `1.0` | 連続発火を防ぐ最小間隔（秒） |
-| `--supervisor_motion_threshold` | `0.02` | 動きと判定する画素割合のしきい値 |
-
-起動例（`overall` を supervisor として有効化）:
+async inference client 側で supervisor を有効化します。
 
 ```bash
-lerobot-async-client \
-    ... \
-    --actions_per_chunk=50 \
-    --chunk_size_threshold=0.5 \
-    --supervisor_enabled=True \
-    --supervisor_camera=overall \
-    --supervisor_poll_fps=20 \
-    --supervisor_cooldown_s=1.0 \
-    --supervisor_motion_threshold=0.02
+--supervisor_enabled=true \
+--supervisor_camera=overall \
+--supervisor_poll_fps=20 \
+--supervisor_cooldown_s=1.0 \
+--supervisor_motion_threshold=0.02
 ```
 
-## 検証手順
+赤い cube の速度に応じて replan timing を調整する場合:
 
-1. `--supervisor_enabled=True` で起動し、ログに `Supervisor monitor started` が出ることを確認。
-2. `overall` の前で大きく動く → ログに `Re-inference triggered by supervisor` が出ることを確認。
-3. 静止時はトリガが出ない（cooldown と threshold が機能している）ことを確認。
+```bash
+--supervisor_enabled=true \
+--supervisor_detector_type=red_cube_speed \
+--supervisor_camera=overall \
+--supervisor_poll_fps=20 \
+--supervisor_cooldown_s=0.5 \
+--supervisor_slow_speed_px_s=40 \
+--supervisor_fast_speed_px_s=200 \
+--supervisor_urgent_speed_px_s=250 \
+--supervisor_min_chunk_size_threshold=0.25 \
+--supervisor_max_chunk_size_threshold=0.75
+```
 
-## 既知の限界
+パラメータ:
 
-- 発火しても新チャンク到着まで推論遅延 `d` は残る（Tier 2 の原理的下限）。
-- `d` 中に起きた変化は生成完了まで不可視（Tier 3 でしか縮められない）。
+| オプション | 意味 |
+|---|---|
+| `supervisor_enabled` | supervisor monitor を有効化する |
+| `supervisor_camera` | 監視する camera key |
+| `supervisor_poll_fps` | camera を読む頻度 |
+| `supervisor_cooldown_s` | trigger の連発を抑える秒数 |
+| `supervisor_motion_threshold` | frame 内で変化した pixel 比率の閾値 |
+| `supervisor_detector_type` | `motion` または `red_cube_speed` |
+| `supervisor_slow_speed_px_s` | 低い replan threshold に対応する cube 速度 |
+| `supervisor_fast_speed_px_s` | 高い replan threshold に対応する cube 速度 |
+| `supervisor_urgent_speed_px_s` | queue 残量に関係なく即時 replan する速度 |
+| `supervisor_min_chunk_size_threshold` | cube が遅いときの adaptive threshold |
+| `supervisor_max_chunk_size_threshold` | cube が速いときの adaptive threshold |
+| `supervisor_red_hue_tolerance_deg` | red mask の hue 許容幅 |
+| `supervisor_red_saturation_min` | red mask の最小 saturation |
+| `supervisor_red_value_min` | red mask の最小 value |
+| `supervisor_red_min_area_ratio` | red mask として認める最小面積比 |
 
-## 参考文献
+## 既存挙動への影響
 
-- [Real-Time Execution of Action Chunking Flow Policies (RTC)](https://arxiv.org/abs/2506.07339)
-- [Adaptive Action Chunking (AAC)](https://arxiv.org/abs/2604.04161)
-- [Denoising Tells When to Replan](https://arxiv.org/abs/2606.03847)
-- [A2C2: Leave No Observation Behind](https://arxiv.org/abs/2509.23224)
+`supervisor_enabled=false` がデフォルトなので、既存の CLI と async inference は従来どおり queue threshold だけで replan します。supervisor を有効にした場合だけ、queue threshold に event trigger が追加されます。
+
+## テスト方針
+
+- docs build で MkDocs nav と本文を確認する
+- `MotionDetector` / `SupervisorMonitor` / `RedCubeSpeedDetector` の import を確認する
+- 赤い cube mask の centroid と速度推定を確認する
+- 速度から adaptive threshold への mapping を確認する
+- supervisor 無効時に既存 async inference config が作れることを確認する
+- supervisor 有効時は camera key、poll fps、cooldown、motion threshold の config validation を確認する
+
+## 今後の課題
+
+- grasp zone 到達時刻の予測
+- `DetectorOutput` による `replan_now` と `effective_horizon` の分離
+- policy/server 側まで含む本当の dynamic horizon
+- action queue の flush / partial replacement
+- YOLO + IoU など object detection ベースの trigger

@@ -71,7 +71,7 @@ plugins:
             SmolVLA ファインチューニング: SmolVLA Fine-tuning
             lerobot editable 構成: lerobot Editable Setup
             RTC sim ロールアウト: RTC Sim Rollout
-            Supervisor トリガによる動的 replan: Dynamic Replan via Supervisor Trigger
+            Supervisor トリガによる動的 replan: Supervisor-Triggered Replan
 
 nav:
   - ホーム: index.md
