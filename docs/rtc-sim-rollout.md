@@ -1,20 +1,51 @@
-# SmolVLA + RTC 非同期ロールアウトをシミュレーションで動かす
+# SmolVLA + RTC 非同期ロールアウト（実機 / シミュレーション）
 
-実機の `lerobot-rollout --inference.type=rtc`（非同期 Real-Time Chunking）経路を、**ハードウェア無しで MuJoCo シミュレーションで動かす**ための一通り（セットアップ → 学習 → ロールアウト/録画）。最終ゴールは実機 SO-101。
+`lerobot-rollout --inference.type=rtc`（非同期 Real-Time Chunking）でファインチューニング済み SmolVLA を動かすための一通り。**最終ゴールは実機 SO-101** で、同じパイプラインを MuJoCo シミュレーションでも流せる。
 
-ポイント：RTC 経路は `Robot` 抽象を要求する実機前提の作りなので、MuJoCo を裏に持つ `Robot`（`sim_so101`）を1個用意し、`--robot.type=sim_so101` で同じパイプラインをシムで流す。アダプタを実機ドライバ（`so101_follower`）に差し替えれば実機へ移行できる。
+- **実機 SO-101**: 登録済みアームに対し `pixi run eval --rtc` で起動するのが最短。[簡易実行（実機 SO-101・最短）](#最短)を参照。
+- **シミュレーション**: ハードウェア無しで配線と RTC 非同期挙動を検証する。`--robot.type=sim_so101` で同じパイプラインをシムで流す（[3. ロールアウト](#3-rollout)以降）。
 
-GH200 ノードで end-to-end の動作を確認済み（学習 → sim 接続 → オフスクリーン描画 → RTC 非同期ロールアウト → 録画）。
+RTC 経路は `Robot` 抽象を要求する実機前提の作りで、シムは MuJoCo を裏に持つ `Robot`（`sim_so101`）を1個用意して同じ経路を流している。アダプタを実機ドライバ（`so101_follower`）に差し替えれば実機へ移行できる。GH200 ノードで sim の end-to-end 動作を確認済み（学習 → sim 接続 → オフスクリーン描画 → RTC 非同期ロールアウト → 録画）。実機 RTC 経路はコード上は通っているが、実機での動作検証は未実施。
+
+---
+
+## 簡易実行（実機 SO-101・最短） {#最短}
+
+アームとカメラを一度登録しておけば（[セットアップ](setup.md) / `pixi run set-port follower` / `pixi run calibrate follower` / `pixi run set-camera ...`）、RTC 非同期ロールアウトは **`--rtc` を付けるだけ**で起動できる。`pixi run eval` は登録済み follower の port / id / cameras と安全上限・データセット命名を自動で組み立てる（[`cli/so101.py`](https://github.com/Octpus-VLA/reactive-vla/blob/main/cli/so101.py) の `evaluate`）。
+
+```bash
+# 同期推論（従来どおり）
+pixi run eval --policy <ckpt> --task "Grab the cube" --repo-id rollout_test
+
+# 非同期 RTC（--rtc を足すだけ。横で再推論しながら実行）
+pixi run eval --rtc --policy <ckpt> --task "Grab the cube" --repo-id rollout_rtc_test
+
+# horizon / 再推論しきい値を変える + 急な動きを抑える安全上限（推奨）
+pixi run eval --rtc --execution-horizon 10 --queue-threshold 30 --max-rel 5 \
+  --policy <ckpt> --task "Grab the cube" --repo-id rollout_rtc_test
+
+# detector を足すと replan タイミングが動的制御される（赤 cube の速度に追従）
+pixi run eval --rtc --detector red_cube_speed \
+  --policy <ckpt> --task "Grab the cube" --repo-id rollout_rtc_detector
+```
+
+- `<ckpt>` は学習で出た `outputs/train/.../checkpoints/last`（`pretrained_model` は自動補完）または Hub の `user/name`。
+- `--rtc` を付けると内部で `--inference.type=rtc --inference.rtc.execution_horizon=… --inference.queue_threshold=… --policy.rtc_config.enabled=true --policy.rtc_config.execution_horizon=…` に展開される（horizon はポリシー側・エンジン側を自動で一致させる。理由は[オプション解説](#opts)の注記）。
+- `--repo-id` は `rollout_` で始める必要がある（lerobot の制約）。エピソード間に follower は自動で初期姿勢へ戻る（leader 不要）。
+- 自律実行では **`--max-rel`（1ステップの最大移動量 deg）を付けて急な動きを抑える**のを推奨。
+- `--detector`（`motion` / `red_cube_speed`）は **`--rtc` と併用が前提**。`--inference.supervisor.enabled=true --inference.supervisor.detector.type=… --inference.supervisor.camera=…` に展開される。監視カメラは `--detector-camera` で指定（既定は登録済みカメラの `overall`、無ければ先頭）。細かいしきい値は passthrough で渡す（例 `--inference.supervisor.detector.urgent_speed_px_s=300`）。detector の仕組みは [Supervisor トリガによる動的 replan](supervisor-trigger.md) を参照。
+
+下層の生コマンドや引数の意味は [実機 SO-101 で動かす（生コマンド）](#raw) と [オプション解説](#opts) を参照。
 
 ---
 
 ## 全体フロー
 
 ```
-1. セットアップ   assets 同梱モデル + pixi install + MUJOCO_GL=egl
+1. セットアップ   実機: アーム/カメラ登録 ・ sim: assets 同梱モデル + pixi install + MUJOCO_GL=egl
 2. 学習           lerobot-train で普通の SmolVLA を作る（RTC は学習に不要）
-3. ロールアウト   lerobot-rollout --inference.type=rtc でシムを走らせる
-   └ 録画する場合は --strategy.type=episodic で MP4 を保存
+3. ロールアウト   lerobot-rollout --inference.type=rtc を実機 / シムで走らせる
+   └ 録画する場合は --strategy.type=episodic で MP4 / データセットを保存
 ```
 
 ---
@@ -76,9 +107,39 @@ pixi run train \
 
 ---
 
-## 3. ロールアウト
+## 3. ロールアウト {#3-rollout}
 
-### 動作確認（録画なし・base 戦略）
+実機・シムとも同じ `lerobot-rollout` を使い、`--robot.type` だけを差し替える（実機 `so101_follower` / シム `sim_so101`）。実機は `pixi run eval --rtc` が最短（[簡易実行](#最短)）。以下はその下層で何が走っているかと、シムでの動かし方。
+
+### 実機 SO-101 で動かす（生コマンド） {#raw}
+
+`pixi run eval --rtc` を使わず素の `lerobot-rollout` を直接叩く場合。前提として follower のキャリブレーション（`pixi run calibrate follower`、`~/.cache/huggingface/lerobot/calibration/so_follower/<id>.json` に保存）とシリアルポート権限（`/dev/ttyACM*`、`dialout`/`uucp` グループ）が必要。
+
+```bash
+lerobot-rollout \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=<follower-id> \
+  --robot.cameras='{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}' \
+  --robot.max_relative_target=5 \
+  --policy.path=outputs/train/.../checkpoints/last/pretrained_model \
+  --policy.rtc_config.enabled=true --policy.rtc_config.execution_horizon=10 \
+  --inference.type=rtc --inference.rtc.execution_horizon=10 --inference.queue_threshold=30 \
+  --strategy.type=episodic \
+  --dataset.repo_id=local/rollout_rtc_real --dataset.num_episodes=10 --dataset.fps=30 \
+  --dataset.push_to_hub=false \
+  --fps=30 --task="Grab the cube"
+```
+
+**実機のハマりどころ・前提**
+
+- **カメラキー名（`front`/`side` など）は学習データと一致必須**。`--robot.cameras` の各キーは学習時の `observation.images.<key>` に対応する（不一致だと観測が埋まらない）。`pixi run eval --rtc` は登録済みカメラからこれを自動生成する。
+- **`--robot.max_relative_target`（=`--max-rel`）で1ステップの最大移動量を制限**。自律実行で急なモーションを防ぐ安全策。
+- **`--robot.id` は `pixi run calibrate follower` で作った ID**。未キャリブレーションだと接続時に自動キャリブが走る。
+- エピソード間 follower は自動で初期姿勢へ戻る（`--return_to_initial_position` 既定 true）。切断時はトルク解放（`disable_torque_on_disconnect` 既定 true）。
+- 実機 RTC の凍結区間は推論レイテンシで自然に発生する（sim 同様）。`execution_horizon` はポリシー側・エンジン側を一致させる（[オプション解説](#opts)の注記）。
+
+### 動作確認（シミュレーション・録画なし・base 戦略）
 
 ```bash
 export MUJOCO_GL=egl
@@ -127,7 +188,7 @@ pixi run lerobot-rollout \
 
 ---
 
-## オプション解説
+## オプション解説 {#opts}
 
 | オプション | 意味 |
 |---|---|
@@ -152,6 +213,24 @@ pixi run lerobot-rollout \
 | `--play_sounds` | 音声読み上げ。HPC では `false` 必須 |
 
 > **RTC の `execution_horizon` が2系統**ある点に注意。ポリシー側 `--policy.rtc_config.*`（ガイダンス発火）とエンジン側 `--inference.rtc.*`（キュー管理）で、**両方を一致**させる（`predict_action_chunk` に horizon を渡していないため、ガイダンスはポリシー側 config を見る）。
+
+---
+
+## 測定シナリオ（RTC / replan step / detector）
+
+反応性の比較実験は、`pixi run eval --rtc` を起点に3パターンで回せる。定量データは専用の計測コードを足さず、まず既存ログ（RTC スレッドの `real_delay` / queue サイズ、detector の `reason` / `speed_px_s`）を使う。
+
+| シナリオ | コマンド | 振るパラメータ | 観察ログ |
+|---|---|---|---|
+| ① RTC 単体 | `pixi run eval --rtc ...` | `--execution-horizon` | `RTC inference latency=…, queue=…`（debug）, `real_delay` |
+| ② replan step スイープ | `pixi run eval --rtc --queue-threshold {10,20,30,40} ...` | `--queue-threshold` | リプラン間隔 ≈ `chunk_size − queue_threshold`、queue 推移 |
+| ③ detector 動的 replan | `pixi run eval --rtc --detector red_cube_speed ...` | `--inference.supervisor.detector.{slow,fast,urgent}_speed_px_s` 等 | `RTC early replan (detector): reason=… speed_px_s=…` |
+
+- ③ では detector が `effective_chunk_size_threshold`（0–1）を返し、エンジンが `× chunk_size` で **動的な queue しきい値**に変換する。cube が速いほど早く（queue を多く残して）リプランし、`urgent_speed_px_s` 超で queue 残量に関係なく即時リプランする。
+- detector が無効（既定）なら ① のゲート（`qsize ≤ queue_threshold`）のみで動き、既存挙動と完全に同じ。
+- 同一指標で横並び比較したい場合、①②の `queue_threshold`（絶対ステップ）と③の `chunk_size_threshold`（割合）は `絶対 = 割合 × chunk_size` で換算する。
+
+> detector・supervisor の実装は async inference 経路と共有（`lerobot/detectors/`）。同じ detector を PolicyServer + RobotClient 構成でも使える。詳細は [Supervisor トリガによる動的 replan](supervisor-trigger.md)。
 
 ---
 
