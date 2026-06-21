@@ -800,10 +800,39 @@ def evaluate(
         False, "--keep-viewer", help="Leave the Rerun viewer open after exit (default: close it)."
     ),
     cameras: bool = typer.Option(True, "--cameras/--no-cameras"),
+    rtc: bool = typer.Option(
+        False,
+        "--rtc",
+        help="Use async Real-Time Chunking inference (background-thread replan) instead of the default sync engine.",
+    ),
+    execution_horizon: int = typer.Option(
+        10,
+        "--execution-horizon",
+        help="RTC only: leftover-blend / guidance horizon in frames. Policy and engine side are kept equal.",
+    ),
+    queue_threshold: int = typer.Option(
+        30,
+        "--queue-threshold",
+        help="RTC only: replan when the action queue drops to this many steps (replan interval ~= chunk_size - this).",
+    ),
+    detector: str = typer.Option(
+        "none",
+        "--detector",
+        help="RTC only: add event-triggered / speed-adaptive replanning. Options: none, motion, red_cube_speed.",
+    ),
+    detector_camera: str = typer.Option(
+        None,
+        "--detector-camera",
+        help="Camera key the detector watches (defaults to a registered camera named 'overall', else the first). Must be a registered camera.",
+    ),
 ) -> None:
     """Run a trained policy on the follower and record eval episodes (lerobot-rollout, episodic strategy).
 
     Between episodes the follower automatically returns to its startup position (no leader needed).
+    Pass --rtc to drive the follower with async Real-Time Chunking inference instead of the sync engine.
+    Add --detector to let a camera detector control the RTC replan timing (red_cube_speed adapts it to
+    cube speed). Fine-tune the detector with passthrough flags, e.g.
+    --inference.supervisor.detector.urgent_speed_px_s=300.
     """
     cfg = _load()
     foll = _require(cfg, "follower")  # the policy drives the follower; no leader needed
@@ -820,7 +849,6 @@ def evaluate(
         *_arm_flags("robot", foll),
         f"--policy.path={_resolve_policy(policy)}",
         "--strategy.type=episodic",
-        "--inference.type=sync",
         f"--task={task}",
         f"--fps={fps}",
         f"--dataset.repo_id={repo}",
@@ -828,6 +856,41 @@ def evaluate(
         f"--dataset.fps={fps}",
         f"--dataset.push_to_hub={'true' if push else 'false'}",
     ]
+    if rtc:
+        # Async RTC: replan in a background thread, blending the leftover chunk over execution_horizon.
+        # execution_horizon lives in two places (policy guidance + engine queue) and must match — see
+        # docs/rtc-sim-rollout.md. Guidance reads the policy-side config, so enable it there too.
+        cmd += [
+            "--inference.type=rtc",
+            f"--inference.rtc.execution_horizon={execution_horizon}",
+            f"--inference.queue_threshold={queue_threshold}",
+            "--policy.rtc_config.enabled=true",
+            f"--policy.rtc_config.execution_horizon={execution_horizon}",
+        ]
+    else:
+        cmd.append("--inference.type=sync")
+    if detector != "none":
+        if not rtc:
+            raise typer.BadParameter("--detector requires --rtc (the detector drives the RTC replan gate).")
+        if detector not in {"motion", "red_cube_speed"}:
+            raise typer.BadParameter(
+                f"--detector must be one of none, motion, red_cube_speed (got '{detector}')."
+            )
+        cam_key = detector_camera
+        if cam_key is None:
+            cam_keys = list((foll.get("cameras") or {}).keys())
+            if not cam_keys:
+                raise typer.BadParameter(
+                    "--detector needs a camera but none are registered. "
+                    "Register one with `pixi run set-camera`, or pass --detector-camera."
+                )
+            cam_key = "overall" if "overall" in cam_keys else cam_keys[0]
+        # Detector drives the RTC replan gate (see lerobot.detectors / docs/supervisor-trigger.md).
+        cmd += [
+            "--inference.supervisor.enabled=true",
+            f"--inference.supervisor.detector.type={detector}",
+            f"--inference.supervisor.camera={cam_key}",
+        ]
     if episode_time is not None:
         cmd.append(f"--dataset.episode_time_s={episode_time}")
     if reset_time is not None:

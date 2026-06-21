@@ -46,7 +46,7 @@ Conceptually:
 should_replan = queue_below_threshold or supervisor_triggered
 ```
 
-The v1 detector is a frame-difference motion detector. It converts consecutive frames to grayscale and fires when the fraction of pixels with large intensity changes exceeds `supervisor_motion_threshold`.
+The v1 detector is a frame-difference motion detector. It converts consecutive frames to grayscale and fires when the fraction of pixels with large intensity changes exceeds `supervisor.detector.motion_threshold`.
 
 Capabilities:
 
@@ -55,11 +55,12 @@ Capabilities:
 - Is disabled by default so existing behavior is preserved
 - Does not yet infer object identity or speed
 
-The implementation lives in `third_party/lerobot`:
+The implementation lives in `third_party/lerobot`. The detectors are shared by the async-inference path and the RTC rollout path, so they live in `src/lerobot/detectors/`:
 
-- `src/lerobot/async_inference/supervisor.py`: `MotionDetector` and `SupervisorMonitor`
-- `src/lerobot/async_inference/configs.py`: supervisor config
-- `src/lerobot/async_inference/robot_client.py`: queue threshold plus supervisor trigger integration
+- `src/lerobot/detectors/`: `MotionDetector` / `RedCubeSpeedDetector` / `DetectorOutput` plus `DetectorConfig`, `SupervisorConfig`, and `make_detector` (pure, transport-agnostic logic)
+- `src/lerobot/async_inference/supervisor.py`: `SupervisorMonitor` (async wrapper that polls a camera on its own thread)
+- `src/lerobot/async_inference/robot_client.py`: queue threshold plus supervisor trigger integration (async path, `config.supervisor`)
+- `src/lerobot/rollout/inference/rtc.py`: the RTC engine runs the detector on the control-loop observation frame to drive the replan gate (RTC path, `--inference.supervisor`)
 
 ### Tier 3 v1: speed-adaptive replan
 
@@ -84,7 +85,7 @@ Capabilities:
 - Tracks the red cube with an HSV mask
 - Estimates `speed_px_s` from mask-centroid motion
 - Raises `effective_chunk_size_threshold` when the cube is fast, so observations are sent while more queued actions remain
-- Fires an immediate replan when speed exceeds `supervisor_urgent_speed_px_s`
+- Fires an immediate replan when speed exceeds `supervisor.detector.urgent_speed_px_s`
 - Keeps existing behavior unchanged by default, because `motion` remains the default detector
 
 Conceptually:
@@ -115,52 +116,84 @@ This v1 does not yet predict grasp-zone arrival or change the true action horizo
 
 ## Configuration Example
 
-Enable the supervisor on the async inference client:
+The detector works in **both** the async-inference path (PolicyServer + RobotClient) and the RTC rollout path, with the same config keys; only the prefix differs:
+
+- async client: `--supervisor.*`
+- RTC rollout: `--inference.supervisor.*` (shortest form: `pixi run eval --rtc --detector ...`)
+
+Pick the detector with `--supervisor.detector.type=motion|red_cube_speed` and set its
+backend-specific fields with `--supervisor.detector.<field>` (a draccus choice registry, so
+only the selected backend's fields are exposed).
+
+Enable the motion detector (default) on the async inference client:
 
 ```bash
---supervisor_enabled=true \
---supervisor_camera=overall \
---supervisor_poll_fps=20 \
---supervisor_cooldown_s=1.0 \
---supervisor_motion_threshold=0.02
+--supervisor.enabled=true \
+--supervisor.camera=overall \
+--supervisor.poll_fps=20 \
+--supervisor.cooldown_s=1.0 \
+--supervisor.detector.type=motion \
+--supervisor.detector.motion_threshold=0.02
 ```
 
 Enable speed-adaptive replanning for the red cube:
 
 ```bash
---supervisor_enabled=true \
---supervisor_detector_type=red_cube_speed \
---supervisor_camera=overall \
---supervisor_poll_fps=20 \
---supervisor_cooldown_s=0.5 \
---supervisor_slow_speed_px_s=40 \
---supervisor_fast_speed_px_s=200 \
---supervisor_urgent_speed_px_s=250 \
---supervisor_min_chunk_size_threshold=0.25 \
---supervisor_max_chunk_size_threshold=0.75
+--supervisor.enabled=true \
+--supervisor.camera=overall \
+--supervisor.cooldown_s=0.5 \
+--supervisor.detector.type=red_cube_speed \
+--supervisor.detector.slow_speed_px_s=40 \
+--supervisor.detector.fast_speed_px_s=200 \
+--supervisor.detector.urgent_speed_px_s=250 \
+--supervisor.detector.min_chunk_size_threshold=0.25 \
+--supervisor.detector.max_chunk_size_threshold=0.75
 ```
+
+Shortest form on the RTC rollout path:
+
+```bash
+pixi run eval --rtc --detector red_cube_speed --detector-camera overall \
+  --policy <ckpt> --task "Grab the cube" --repo-id rollout_rtc_detector
+# fine-tune via passthrough: --inference.supervisor.detector.urgent_speed_px_s=300
+```
+
+Supervisor wiring:
 
 | Option | Meaning |
 |---|---|
-| `supervisor_enabled` | Enable the supervisor monitor |
-| `supervisor_camera` | Camera key to watch |
-| `supervisor_poll_fps` | Camera polling rate |
-| `supervisor_cooldown_s` | Minimum seconds between triggers |
-| `supervisor_motion_threshold` | Fraction of changed pixels required to trigger |
-| `supervisor_detector_type` | `motion` or `red_cube_speed` |
-| `supervisor_slow_speed_px_s` | Cube speed mapped to the low replan threshold |
-| `supervisor_fast_speed_px_s` | Cube speed mapped to the high replan threshold |
-| `supervisor_urgent_speed_px_s` | Cube speed that fires immediate replanning |
-| `supervisor_min_chunk_size_threshold` | Adaptive threshold used when the cube is slow |
-| `supervisor_max_chunk_size_threshold` | Adaptive threshold used when the cube is fast |
-| `supervisor_red_hue_tolerance_deg` | Hue tolerance for the red mask |
-| `supervisor_red_saturation_min` | Minimum saturation for the red mask |
-| `supervisor_red_value_min` | Minimum value for the red mask |
-| `supervisor_red_min_area_ratio` | Minimum red-mask area ratio |
+| `supervisor.enabled` | Enable the supervisor (default false) |
+| `supervisor.camera` | Camera key to watch (must match an observation image key) |
+| `supervisor.poll_fps` | Camera polling rate (**async path only**; the RTC path uses the control-loop frame) |
+| `supervisor.cooldown_s` | Minimum seconds between triggers |
+| `supervisor.detector.type` | `motion` or `red_cube_speed` |
+
+`detector.type=motion`:
+
+| Option | Meaning |
+|---|---|
+| `supervisor.detector.motion_threshold` | Fraction of changed pixels required to trigger |
+
+`detector.type=red_cube_speed`:
+
+| Option | Meaning |
+|---|---|
+| `supervisor.detector.slow_speed_px_s` | Cube speed mapped to the low replan threshold |
+| `supervisor.detector.fast_speed_px_s` | Cube speed mapped to the high replan threshold |
+| `supervisor.detector.urgent_speed_px_s` | Cube speed that fires immediate replanning |
+| `supervisor.detector.min_chunk_size_threshold` | Adaptive threshold used when the cube is slow |
+| `supervisor.detector.max_chunk_size_threshold` | Adaptive threshold used when the cube is fast |
+| `supervisor.detector.hue_tolerance_deg` | Hue tolerance for the red mask |
+| `supervisor.detector.saturation_min` | Minimum saturation for the red mask |
+| `supervisor.detector.value_min` | Minimum value for the red mask |
+| `supervisor.detector.min_area_ratio` | Minimum red-mask area ratio |
+
+> On the RTC path the engine maps `effective_chunk_size_threshold` (a 0-1 fraction) to an absolute
+> queue threshold via `× chunk_size`. On the async path it is used directly as `chunk_size_threshold`.
 
 ## Effect On Existing Behavior
 
-`supervisor_enabled=false` by default, so existing CLI and async inference runs continue to replan only from the queue threshold. When the supervisor is enabled, event triggers are added to the queue condition.
+`supervisor.enabled=false` by default, so existing CLI, async inference, and RTC rollout runs continue to replan only from the queue threshold. When the supervisor is enabled, event triggers (and speed-adaptive thresholds) are added to the queue condition.
 
 ## Test Plan
 
