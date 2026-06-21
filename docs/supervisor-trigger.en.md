@@ -61,40 +61,41 @@ The implementation lives in `third_party/lerobot`:
 - `src/lerobot/async_inference/configs.py`: supervisor config
 - `src/lerobot/async_inference/robot_client.py`: queue threshold plus supervisor trigger integration
 
-### Tier 3: predictive/adaptive replan
+### Tier 3 v1: speed-adaptive replan
 
-This is the next research and implementation target. Instead of returning only "something moved", the detector estimates cube position, velocity, predicted position, replan timing, and effective horizon.
+The next step is to return more than "something moved". The detector estimates the red cube position and image-plane speed, then dynamically adjusts replan timing from that speed.
 
-Expected detector output:
+In v1, the `overall` camera frame is segmented with an HSV red mask, and `speed_px_s` is estimated from mask-centroid motion. Red wraps around the 0/360 degree hue boundary, so the mask accepts both ends of the hue range.
+
+Implemented detector output:
 
 ```python
 DetectorOutput(
-    cube_visible=True,
-    cube_center_px=(x, y),
-    cube_velocity_px_s=(vx, vy),
-    predicted_center_px=(px, py),
-    time_to_grasp_zone_s=t,
     replan_now=True,
-    effective_horizon=8,
+    center_px=(x, y),
+    speed_px_s=180.0,
+    effective_chunk_size_threshold=0.7,
+    reason="red_cube_speed",
 )
 ```
 
 Capabilities:
 
-- Tracks the target cube from color masks or object detection
-- Predicts when it reaches the grasp zone
-- Shortens the effective horizon when the cube is fast
-- Uses a longer horizon when the cube is slow to preserve stability
+- Tracks the red cube with an HSV mask
+- Estimates `speed_px_s` from mask-centroid motion
+- Raises `effective_chunk_size_threshold` when the cube is fast, so observations are sent while more queued actions remain
+- Fires an immediate replan when speed exceeds `supervisor_urgent_speed_px_s`
+- Keeps existing behavior unchanged by default, because `motion` remains the default detector
 
 Conceptually:
 
 ```text
-slow cube -> longer effective_horizon
-fast cube -> shorter effective_horizon
-cube near grasp zone -> urgent replan
+slow cube -> lower chunk_size_threshold, stability-biased
+fast cube -> higher chunk_size_threshold, earlier replan
+cube exceeds urgent speed -> urgent replan independent of queue level
 ```
 
-Tier 3 is not implemented in this work. The immediate goal is to establish the Tier 2 supervisor path so `MotionDetector` can later be replaced by `CubeMotionDetector`.
+This v1 does not yet predict grasp-zone arrival or change the true action horizon. It is the smallest closed loop from camera speed to adaptive replan timing.
 
 ## Requirements Fixed On 2026-06-20
 
@@ -103,6 +104,14 @@ Tier 3 is not implemented in this work. The immediate goal is to establish the T
 - Keep existing async inference behavior unchanged by default
 - Use only frame difference in v1
 - Keep YOLO, cube speed prediction, and dynamic horizon as future work
+
+## Tier 3 v1 Added On 2026-06-21
+
+- Added a `red_cube_speed` detector for red-cube HSV masking
+- Added structured `DetectorOutput` fields: `center_px`, `speed_px_s`, `effective_chunk_size_threshold`, and `replan_now`
+- Let `RobotClient` use detector output to choose a temporary adaptive replan threshold
+- Fire an event-triggered replan when speed exceeds the urgent threshold
+- Keep dynamic horizon, queue flushing, YOLO, and grasp-zone arrival prediction as future work
 
 ## Configuration Example
 
@@ -116,6 +125,21 @@ Enable the supervisor on the async inference client:
 --supervisor_motion_threshold=0.02
 ```
 
+Enable speed-adaptive replanning for the red cube:
+
+```bash
+--supervisor_enabled=true \
+--supervisor_detector_type=red_cube_speed \
+--supervisor_camera=overall \
+--supervisor_poll_fps=20 \
+--supervisor_cooldown_s=0.5 \
+--supervisor_slow_speed_px_s=40 \
+--supervisor_fast_speed_px_s=200 \
+--supervisor_urgent_speed_px_s=250 \
+--supervisor_min_chunk_size_threshold=0.25 \
+--supervisor_max_chunk_size_threshold=0.75
+```
+
 | Option | Meaning |
 |---|---|
 | `supervisor_enabled` | Enable the supervisor monitor |
@@ -123,6 +147,16 @@ Enable the supervisor on the async inference client:
 | `supervisor_poll_fps` | Camera polling rate |
 | `supervisor_cooldown_s` | Minimum seconds between triggers |
 | `supervisor_motion_threshold` | Fraction of changed pixels required to trigger |
+| `supervisor_detector_type` | `motion` or `red_cube_speed` |
+| `supervisor_slow_speed_px_s` | Cube speed mapped to the low replan threshold |
+| `supervisor_fast_speed_px_s` | Cube speed mapped to the high replan threshold |
+| `supervisor_urgent_speed_px_s` | Cube speed that fires immediate replanning |
+| `supervisor_min_chunk_size_threshold` | Adaptive threshold used when the cube is slow |
+| `supervisor_max_chunk_size_threshold` | Adaptive threshold used when the cube is fast |
+| `supervisor_red_hue_tolerance_deg` | Hue tolerance for the red mask |
+| `supervisor_red_saturation_min` | Minimum saturation for the red mask |
+| `supervisor_red_value_min` | Minimum value for the red mask |
+| `supervisor_red_min_area_ratio` | Minimum red-mask area ratio |
 
 ## Effect On Existing Behavior
 
@@ -131,14 +165,16 @@ Enable the supervisor on the async inference client:
 ## Test Plan
 
 - Build the MkDocs site to check nav and content
-- Import `MotionDetector` and `SupervisorMonitor`
+- Import `MotionDetector`, `SupervisorMonitor`, and `RedCubeSpeedDetector`
+- Confirm red-cube mask centroid and speed estimation
+- Confirm speed-to-adaptive-threshold mapping
 - Confirm async inference config works with supervisor disabled
 - Confirm config validation for camera supervisor parameters
 
 ## Future Work
 
-- HSV color-mask `CubeMotionDetector`
-- Cube speed estimation and grasp-zone arrival prediction
+- Grasp-zone arrival prediction
 - Separate `replan_now` from `effective_horizon` through `DetectorOutput`
+- True dynamic horizon across policy/server behavior
 - Action queue flush or partial replacement
 - Object detection triggers such as YOLO plus IoU
