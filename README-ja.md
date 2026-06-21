@@ -9,9 +9,9 @@ first octpus vla project repository
 ## 機能一覧
 
 - **SO-101 実機操作 CLI**（`cli/so101.py`、`pixi run <command>` として公開）— leader/follower アームを一度登録すれば、以降はキャリブレーション・テレオペ・データセットの記録/再生/可視化/編集・Hubへのアップロードまで行えます。詳細は下記の[コマンド一覧](#so-101-コマンド-pixi-run-command)を参照。アーム登録・テレオペの流れ（`set-port` → `setup-motors` → `calibrate` → `teleop`）は [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop) を参考にしています。
-- **模倣学習ファインチューニング** — SO-101 データセットで `smolvla_base` / `pi0_base` をファインチューニング（またはスクラッチ学習）。W&Bロギング・Hugging Face Hubへのpushにも対応。詳細は下記の[お試し学習: SmolVLA](#お試し学習-smolvla-を-so-101-データセットでファインチューニング)・[pi0 でのファインチューニング](#pi0-でのファインチューニング)を参照。
-- **HPCバッチ学習** — `pixi run train` をインタラクティブに実行する代わりに、PBSジョブ（[`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs)）として投入できます。
-- **MuJoCoシミュレーション** — 同梱の SO-ARM100 モデルと `sim_so101` ロボットアダプタにより、実機無しで RTC 非同期ロールアウト経路を検証できます。詳細は下記の[MuJoCo シミュレーション](#mujoco-シミュレーション-rtc-非同期ロールアウト)を参照。
+- **模倣学習ファインチューニング** — SO-101 データセットで `smolvla_base` / `pi0_base` をファインチューニング（またはスクラッチ学習）。W&Bロギング・Hugging Face Hubへのpushにも対応。詳細は下記の[ファインチューニング](#ファインチューニング)を参照。
+- **HPCバッチ学習** — `pixi run train` をインタラクティブに実行する代わりに、PBSジョブとして投入できます。PBSスクリプト自体はキュー名・`group_list` などサイト固有の設定を含むため、このリポジトリには含めていません。[ファインチューニング](#ファインチューニング)節のテンプレートを自分のサイト向けに調整して `jobs/` 以下に置いてください（`jobs/` は `.gitignore` 済みです）。
+- **MuJoCoシミュレーション** — 同梱の SO-ARM100 モデルと `sim_so101` ロボットアダプタにより、実機無しで RTC 非同期ロールアウト経路を検証できます。詳細は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照。
 
 ### SO-101 コマンド （`pixi run <command>`）
 
@@ -68,147 +68,141 @@ pixi run fix    # check --fix + format
 
 詳細な構成・カスタムポリシー追加手順は [docs/lerobot-editable-setup.md](docs/lerobot-editable-setup.md) を参照してください。
 
-## お試し学習: SmolVLA を SO-101 データセットでファインチューニング
+### 4. Lerobot(SO-101)の調整
+詳しくは [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop)を参照
+1. `pixi run set-port leader` / `pixi run set-port follower`（初回のみ）
+2. `pixi run setup-motors leader` / `pixi run setup-motors follower`（これは基本的にやる必要なし）
+3. `pixi run calibrate leader` / `pixi run calibrate follower`
+4. `pixi run set-camera front --index 6`（follower にカメラを割り当て）
+5. `pixi run set-camera overall --index 4`
+6. `pixi run check leader` / `pixi run check follower`（事前診断）
+7. `pixi run teleop` で動作確認
 
-事前学習済みモデル [`lerobot/smolvla_base`](https://huggingface.co/lerobot/smolvla_base)（450M）を、SO-101のpick & placeデモデータセット [`lerobot/svla_so101_pickplace`](https://huggingface.co/datasets/lerobot/svla_so101_pickplace) でファインチューニングする例です。動作確認用なので自前のロボット・カメラは不要です。
+## データ収集
+
+`pixi run record` は leader でテレオペしながら follower + カメラの観測を記録し、`lerobot-record` を呼んでデータセットを作成します（`cli/so101.py` の `record` コマンド）。
+
+```bash
+pixi run record \
+  --task "pick up the red cube and place it in the box" \
+  --repo-id lift_red_cube_50episodes \
+  --episodes 50 \
+  --push
+```
+
+### 主なオプション
+
+| フラグ | デフォルト | 用途 |
+|---|---|---|
+| `--task "<prompt>"` | (必須) | データセットに保存する自然言語のタスク説明 |
+| `--repo-id <name>` | 省略可（`--resume` 時は必須） | データセットid。省略すると `<taskのslug>/<MMDD_HHMM>` を自動生成（例: `--task "pick up the red cube"` → `pick_up_the_red_cube/0620_2015`）。`outputs/train/<policy>/<dataset>/<timestamp>` と同じ命名規則です。`/` を含むため `_resolve_repo` は明示的な namespace/name として扱い、HFユーザー名は前置されません — Hubにpushする場合は `<taskのslug>` という名前のnamespace（実際のHFユーザー/組織）が必要になる点に注意してください |
+| `--episodes N` | 5 | 記録するエピソード数 |
+| `--episode-time SEC` | 20 | 1エピソードの自動停止までの秒数（右矢印キーで早期終了可） |
+| `--reset-time SEC` | 5 | エピソード間でシーンをリセットする秒数 |
+| `--fps N` | 30 | 記録フレームレート |
+| `--push` / `--no-push` | `--no-push` | 記録後にHugging Face Hubへアップロード（事前に `pixi run hf-login` が必要） |
+| `--max-rel DEG` | None | followerの1ステップあたりの最大移動角度（安全策） |
+| `--display` / `--no-display` | `--display` | Rerunビューアでの可視化 |
+| `--keep-viewer` | off | 終了後もRerunビューアを開いたままにする |
+| `--cameras` / `--no-cameras` | `--cameras` | カメラ観測の記録有無 |
+
+
+### 操作方法
+
+記録は自動的に開始します。フォーカスされたターミナル上で矢印キーで制御します。
+
+- **→ (右矢印)**: 現在のエピソードを停止して次へ進む
+- **← (左矢印)**: 現在のエピソードを再記録
+- **Esc**: セッション全体を停止
+
+### 記録済みデータセットを後からHugging Face Hubへアップロードしたいとき
+
+`--no-push`（デフォルト）で記録した場合や `record` 実行後に気が変わった場合は、ローカルデータセットを後から `upload` でアップロードできます。
+
+```bash
+pixi run upload --repo-id <name>
+```
+
+`--private` でプライベートリポジトリとして作成、`--tags tag1,tag2` でデータセットカードにタグを付けられます。
+
+
+## ファインチューニング
+
+事前学習済みモデル [`lerobot/smolvla_base`](https://huggingface.co/lerobot/smolvla_base)（450M）を SO-101 データセットでファインチューニングします。
 
 ### 1. (HPC利用時) GPUノードへの移動
 
-HPC環境ではCPUノード（ログイン/インタラクティブノード）からGPUノードに移動してから実行してください。`/work` 配下がLustreなどの共有ファイルシステムであれば、`.pixi` 環境やsubmoduleはそのまま使えます。
-
 ```bash
-qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=00:15:00
+qsub -I -q interact-g -W group_list=gw13 -l select=1 -l walltime=02:00:00
 ```
 
-GPUノードに入ったら、再度プロジェクトディレクトリに `cd` します。
-
-```bash
-cd /work/gw13/$USER/$PROJECT
-```
-
-### 2. ファインチューニング実行
-
-`pixi run train` は `--policy-path`（事前学習モデルからのファインチューニング）と `--policy`（スクラッチ学習）の二者択一で動作します。
+### 2. 実行
 
 ```bash
 pixi run train \
   --policy-path lerobot/smolvla_base \
-  --repo-id lerobot/svla_so101_pickplace \
-  --batch-size 64 \
-  --steps 20000 \
-  --job-name smolvla_so101_pickplace \
-  --device cuda \
-  -- --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}'
+  --repo-id Octpus-VLA/<dataset> \
+  --batch-size 64 --steps 10000 --save-freq 2000 \
+  --job-name smolvla_so101_pickplace --device cuda \
+  -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-- `lerobot/svla_so101_pickplace` のカメラ名（`observation.images.up` / `observation.images.side`）は `smolvla_base` が期待する名前（`camera1`〜`camera3` の3カメラ）と異なるため `--rename_map` でマッピングします（`camera3` は未使用のまま）。`--` 以降の引数はそのまま `lerobot-train` に転送されます。
-- GPU推奨（A100で20kステップ約4時間）。動作確認だけしたい場合は `--steps 2000` 程度に減らすと短時間で完走します。
-- `--device` は `cuda` / `mps` / `cpu` から実機に合わせて指定。省略すると自動検出されます。
-- 学習結果は `outputs/`（gitignore済み）に出力されます。
-- PBSスケジューラのHPCでは、上記をインタラクティブに実行する代わりに [`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs) を投入できます: `qsub jobs/train_smolvla.pbs`（内部では同じ `pixi run train` を呼んでいます。`STEPS`/`BATCH_SIZE`/`RESUME` などは `qsub -v` で上書き可能。詳細はスクリプト内のコメント参照）。
+- カメラ名がデータセット側で `smolvla_base` の期待する名前（`camera1`〜`camera3`）と異なる場合は `--rename_map` でマッピングします。マップに含めなかったキーは自動的に学習から除外されます。
+- 学習結果は `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（gitignore済み）に出力されます。`--job-name` はW&B上の表示名のみに使われ、ディレクトリ名には影響しません。
 
-#### W&B でトレーニングを記録する
+**HPCで長時間バッチ投入したい場合** は、上記コマンドを包んだPBSスクリプトを自分で用意し、`qsub -l walltime=06:00:00 -q small-g jobs/test.pbs`のように実行してください。
+
+
+### 3. W&B ロギング / Hugging Face Hub へのアップロード（任意）
 
 ```bash
-pixi run wandb-login   # 初回のみ（既にログイン済みならスキップ）
+pixi run wandb-login   # W&B 初回のみ
+pixi run hf-login      # Hub push 初回のみ
 
 pixi run train \
-  --policy-path lerobot/smolvla_base \
-  --repo-id lerobot/svla_so101_pickplace \
-  --batch-size 64 \
-  --steps 20000 \
-  --job-name smolvla_so101_pickplace \
-  --device cuda \
-  --wandb \
-  --wandb-project <プロジェクト名> \
-  --wandb-entity <チーム名> \
-  -- --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}'
+  --policy-path lerobot/smolvla_base --repo-id Octpus-VLA/<dataset> \
+  --wandb --wandb-project <プロジェクト名> \
+  --push-repo-id <名前> \
+  -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-- `--wandb-project` を省略するとプロジェクト名は `lerobot` になります。
-- `--wandb-entity` を省略すると個人アカウントに記録されます。チームに記録する場合は W&B のチーム名（URL の `wandb.ai/<チーム名>` 部分）を指定してください。
-- W&B には `train/loss`・`train/lr`・`train/grad_norm` などが標準で記録されます。
-- lerobot のデフォルトは `log_freq=200`（200ステップごとに1回ログ）です。ログ頻度を変えたい場合は `-- --log_freq=50` のように転送引数で上書きできます。
+`--wandb-project`/`--wandb-entity` を省略すると既定のプロジェクト/個人アカウントに記録されます。`--push-repo-id` に bare name を渡すとHFユーザー名が自動で前置されます。学習後にまとめてpushしたい場合は `pixi run push-policy --checkpoint <checkpoint-dir> --repo-id <名前>`。
 
-#### 学習済みポリシーを Hugging Face Hub にアップロードする
-
-**学習中にそのままプッシュ**（`--push-repo-id` を追加するだけ）:
-
-```bash
-pixi run hf-login   # 初回のみ（既にログイン済みならスキップ）
-
-pixi run train \
-  --policy-path lerobot/smolvla_base \
-  --repo-id lerobot/svla_so101_pickplace \
-  --batch-size 64 \
-  --steps 20000 \
-  --job-name smolvla_so101_pickplace \
-  --device cuda \
-  --push-repo-id smolvla_so101_pickplace \
-  -- --rename_map='{"observation.images.up": "observation.images.camera1", "observation.images.side": "observation.images.camera2"}'
-```
-
-`--push-repo-id` に bare name（スラッシュなし）を渡すと、ログイン中の HF ユーザー名が自動でプレフィックスされます（例: `smolvla_so101_pickplace` → `<HFユーザー>/smolvla_so101_pickplace`）。
-
-**学習後に手動でプッシュ**:
-
-```bash
-pixi run push-policy \
-  --checkpoint outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last \
-  --repo-id smolvla_so101_pickplace
-```
-
-`--checkpoint` にはチェックポイントディレクトリを渡します（`pretrained_model/` サブディレクトリがあれば自動検出します）。`--private` を付けるとプライベートリポジトリとして作成されます。
-
-> `output_dir` は常に `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（`MMDD_HHMM`）です。`--job-name` は W&B 上の表示名だけに使われ、ディレクトリ名には含まれないので、同じ `--job-name` で再実行しても既存ディレクトリと衝突しません。実際のパスは学習実行時のログ（`--output_dir=...`）で確認してください。
-
-### 3. オフライン推論で確認（ロボット不要）
+### 4. オフライン推論で確認（ロボット不要）
 
 ```bash
 pixi run policy-test \
-  --policy outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
-  --repo-id lerobot/svla_so101_pickplace
+  --policy outputs/train/smolvla_base/<dataset>/<タイムスタンプ>/checkpoints/last/pretrained_model \
+  --repo-id Octpus-VLA/<dataset> \
+  --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレを確認できます。
+データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレ（`mean |action - recorded|`、単位は度）を確認できます。学習時に `--rename_map` でカメラ名を変換した場合は、ここでも同じ `--rename_map` を渡してください。省略するとデータセット側のキー（例: `front`/`overall`）とチェックポイントが期待するキー（`camera1`〜`camera3`）が食い違い、`Feature mismatch between dataset/environment and policy config` エラーになります。
+
+HPCでバッチ実行したい場合も、学習と同様に上記コマンドを包んだPBSスクリプトを自分で `jobs/` 以下に用意してください（`.gitignore` 済み）。
 
 参考: [SmolVLAファインチューニングガイド](https://huggingface.co/docs/lerobot/en/smolvla)
 
-## pi0 でのファインチューニング
+### pi0 (`lerobot/pi0_base`)
 
-[`lerobot/pi0_base`](https://huggingface.co/lerobot/pi0_base) は PaLiGemma ベースの〜3B パラメータモデルです。smolvla_base と異なり、カメラ名をデータセットの特徴量から動的に受け取るため `--rename_map` は不要です。
+`--policy-path lerobot/smolvla_base` を `--policy-path lerobot/pi0_base` に変えるだけで同じ手順が使えますが、2点異なります。
 
-> **既知の問題**: 現在、`lerobot/pi0_base` のファインチューニングは `Loading model from: lerobot/pi0_base` → `model.safetensors` のダウンロード中に処理が止まる問題が確認されています。調査中のため、現時点では pi0 の実行は推奨しません。
+- **カメラ名も固定です。** `pi0_base` は `smolvla_base` と同様に、入力特徴量が `observation.images.base_0_rgb`・`left_wrist_0_rgb`・`right_wrist_0_rgb`（OpenPI/DROID由来のbase + wrist×2のカメラ構成）に固定されています。「データセットのカメラ名をそのまま動的に使う」わけではないので、データセット側のキー名が異なる場合は `--rename_map` が必要です（例: `'{"observation.images.front": "observation.images.base_0_rgb"}'`）。マップしなかったキーは無視され、マップされなかった残りの期待カメラはマスク付きのダミー画像で自動的に埋められます。
+- モデルが大きいため `--batch-size` は4〜8程度に下げてください。`pi0_base` は既定で `train_expert_only=false`・`freeze_vision_encoder=false`・`use_amp=false`（全4Bパラメータをfp32でフル学習）なので、パラメータ・勾配・AdamWのオプティマイザ状態（m, v）だけで **固定約64GB**（4.03B × 4byte × 4）がバッチサイズに関係なく乗ります。つまり「1バッチあたり何GB」という線形の見積もりは成立せず、活性化メモリ（バッチサイズに比例する部分）だけが追加コストです。GPUのVRAM次第なので、目安が欲しい場合は短いステップ数で試し打ちしてください: `pixi run train --policy-path lerobot/pi0_base --repo-id Octpus-VLA/<dataset> --batch-size 6 --steps 10 --device cuda -- --rename_map='{"observation.images.front": "observation.images.base_0_rgb"}'`。さらに大きいバッチを通したい場合は次のフラグが効きます（メモリ削減効果が大きい順）: `-- --policy.train_expert_only=true`（VLM本体を凍結しaction expertのみ学習）、`-- --policy.freeze_vision_encoder=true`、`-- --policy.gradient_checkpointing=true`、`-- --policy.use_amp=true`。
 
-### ファインチューニング実行
+> **事前準備が必要**: `pi0_base` のトークナイザーは Google の Gated リポジトリ [`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224) を使います。そのページでライセンスに同意した上で、HFトークンが **fine-grained** タイプの場合は、個別リポジトリのスコープ設定とは別に、トークン全体の **Global** 設定で "Read access to contents of all public gated repos you can access" を有効にしてください（個別リポジトリへの `scoped` 権限だけでは他人の名前空間のGatedリポジトリには効きません）。設定が面倒な場合は fine-grained ではない通常の **Read** タイプのトークンでも構いません。上記の設定でファインチューニングが正常に完走することを確認済みです。
 
-```bash
-pixi run train \
-  --policy-path lerobot/pi0_base \
-  --repo-id lerobot/svla_so101_pickplace \
-  --batch-size 4 \
-  --steps 200 \
-  --device cuda
-```
-
-- モデルが大きいため `--batch-size` は小さく（4〜8 程度）。A100 80GB でも勾配チェックポイントが必要になる場合があります。その場合は `-- --policy.gradient_checkpointing=true` を追加してください。
-- `--rename_map` は不要です（pi0 はデータセットのカメラ名をそのまま使います）。
-
-### オフライン推論で確認（ロボット不要）
+## 推論
 
 ```bash
-pixi run policy-test \
-  --policy outputs/train/pi0_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
-  --repo-id lerobot/svla_so101_pickplace
+pixi run eval --policy <checkpoint> --task "..." --repo-id rollout_<name>
 ```
 
-## MuJoCo シミュレーション: RTC 非同期ロールアウト
+実機上でポリシーを実行し、評価エピソードを記録します（内部は `lerobot-rollout --strategy.type=episodic --inference.type=sync` の同期推論）。評価データセットの repo-id は `eval_` ではなく **`rollout_` プレフィックスが必須**です（例: `rollout_test`）。
 
-SO-ARM100 の MuJoCo モデルを `assets/so_arm100/` に同梱済み（clone不要）で、`sim_so101` ロボットアダプタ（`lerobot` フォーク側）と組み合わせることで、実機前提の `lerobot-rollout --inference.type=rtc`（非同期 Real-Time Chunking）経路をハードウェア無しで一通り検証できます（オフスクリーン描画・エピソード録画を含む）。セットアップ→学習→ロールアウトの手順と RTC パラメータの解説は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照してください。
+RTC（非同期 Real-Time Chunking）の非同期ロールアウトは現状 **MuJoCoシム限定**（[docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md)）です。実機で試す場合は `cli/so101.py` にラッパーが無いため、`lerobot-rollout --robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'` のように手動で組み立てる必要があります（シム向けコマンドの `--robot.type` を差し替えたものに相当）。
 
-## ロードマップ: コンベア把持タスクへの拡張（設計検討中）
-
-> このセクションは未実装の今後の計画です。すでに動く機能は [機能一覧](#機能一覧) を参照してください。
+## ロードマップ
 
 ### 目標タスク
 
@@ -217,29 +211,6 @@ SO-ARM100 の MuJoCo モデルを `assets/so_arm100/` に同梱済み（clone不
 - 画像情報から物体の接近を検出する detector を新規実装し、検出時に VLA へ Action Chunk の再生成を要求することで、既定の（キュー残量ベースの）再計画より速い反応を実現する。
 - VLA（`smolvla_base` を想定）と detector の両方の学習が必要。
 - detector の実装方式は未確定。任意の実装に差し替えられる構成にしたい。
-
-### 現状の実装フロー（再掲）
-
-1. SO-101 実機セットアップ → `set-port` → `setup-motors` → `calibrate` → `set-camera`（初回のみ）。
-2. `record` でテレオペしながらデータセットを記録（現状は据え置きの pick & place のみ）。
-3. `train`（またはPBSジョブ）で `smolvla_base` をファインチューニング。
-4. `policy-test` でオフライン推論を確認。
-5. `eval` で実機上のポリシーを評価 — 内部は `lerobot-rollout --strategy.type=episodic --inference.type=sync` による**同期推論**で、RTC ではない。評価データセットの repo-id は `eval_` ではなく `rollout_` プレフィックスが必須（例: `rollout_test`）。
-6. RTC 非同期ロールアウト（`lerobot-rollout --inference.type=rtc`）は現状 **MuJoCo シム限定**（[docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md)）。`--robot.type=so101_follower` への切り替えは `Robot` 抽象上は可能なはずだが、実機での検証はまだ無く、`cli/so101.py` にもラッパーが無い。
-
-### 次回実機を触るときの手順
-
-1. `pixi run set-port leader` / `pixi run set-port follower`（初回のみ）
-2. `pixi run setup-motors leader` / `pixi run setup-motors follower`（初回のみ）
-3. `pixi run calibrate leader` / `pixi run calibrate follower`
-4. `pixi run set-camera <name> --index N`（follower にカメラを割り当て）
-5. `pixi run check leader` / `pixi run check follower`（任意の事前診断）
-6. `pixi run teleop` で動作確認
-7. `pixi run record --task "pick the object from the belt and place it in the box" --repo-id <name> --episodes <N>` でデータ収集
-8. `pixi run train --policy-path lerobot/smolvla_base --repo-id <name> ...` でファインチューニング（長時間なら [`jobs/train_smolvla.pbs`](jobs/train_smolvla.pbs)）
-9. `pixi run policy-test --policy <checkpoint> --repo-id <name>` でオフライン確認
-10. `pixi run eval --policy <checkpoint> --task "..." --repo-id rollout_<name>` で実機・同期推論評価
-11. RTC を実機で試す場合は、ラッパーが無いため `lerobot-rollout` を手動で組み立てる必要がある（`--robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'` など。[docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) のシム向けコマンドの `--robot.type` を差し替えたものに相当）。
 
 ### 不足している要素
 
@@ -251,3 +222,6 @@ SO-ARM100 の MuJoCo モデルを `assets/so_arm100/` に同梱済み（clone不
 6. **可変速度に対する評価手段が無い**: 異なるコンベア速度での成功率を比較する評価プロトコル・集計ツールが無い（既存の `eval` は録画のみで成功/失敗の自動判定をしない）。
 7. **実機での RTC 自体が未検証**: シムでの動作確認のみで、実機（`so101_follower`）に対しては一度も流していない。
 
+## トラブルシューティング
+
+実行中のジョブは `qstat` で確認できます。

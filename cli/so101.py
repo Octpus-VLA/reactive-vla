@@ -121,6 +121,24 @@ def _hf_user() -> str | None:
         return None
 
 
+def _slugify(text: str, max_len: int = 40) -> str:
+    """Turn a free-text task prompt into a safe dataset-name fragment (lowercase, alnum + underscores)."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", text.strip()).strip("_").lower()
+    return slug[:max_len].rstrip("_") or "task"
+
+
+def _auto_repo_id(task: str) -> str:
+    """Default dataset name when --repo-id is omitted: <task-slug>/<timestamp>.
+
+    Mirrors the policy/dataset/timestamp nesting _job_and_output_dir uses for outputs/train.
+    Note this already contains '/', so _resolve_repo passes it through as an explicit
+    namespace/name rather than prefixing it with the HF user — fine for local recording,
+    but pushing to the Hub later would require a real 'task-slug' namespace.
+    """
+    ts = datetime.datetime.now().strftime("%m%d_%H%M")
+    return f"{_slugify(task)}/{ts}"
+
+
 def _resolve_repo(repo_id: str, for_creation: bool = False) -> str:
     """Turn a bare `name` into `user/name`; pass `user/name` through unchanged.
 
@@ -568,16 +586,21 @@ def record(
         ..., "--task", help="Natural-language task description stored with the dataset."
     ),
     repo_id: str = typer.Option(
-        ..., "--repo-id", help="Dataset id: a bare 'name' (prefixed with your HF user) or 'user/name'."
+        None,
+        "--repo-id",
+        help="Dataset id: a bare 'name' (prefixed with your HF user) or 'user/name'. "
+        "Auto-generated as '<task-slug>/<timestamp>' if omitted (required with --resume) — "
+        "note this skips HF user prefixing, so pushing it to the Hub later needs a real "
+        "'<task-slug>' namespace.",
     ),
     episodes: int = typer.Option(5, "--episodes", help="Number of episodes to record."),
     episode_time: float = typer.Option(
-        None,
+        20,
         "--episode-time",
         help="Seconds per episode before it auto-stops (lerobot default 60). Right-arrow ends one early.",
     ),
     reset_time: float = typer.Option(
-        None, "--reset-time", help="Seconds to reset the scene between episodes (lerobot default 60)."
+        5, "--reset-time", help="Seconds to reset the scene between episodes (lerobot default 60)."
     ),
     fps: int = typer.Option(30, "--fps"),
     push: bool = typer.Option(
@@ -609,6 +632,11 @@ def record(
     """
     if overwrite and resume:
         raise typer.BadParameter("--overwrite and --resume are mutually exclusive.")
+    if resume and not repo_id:
+        raise typer.BadParameter("--repo-id is required with --resume (it must name an existing dataset).")
+    if not repo_id:
+        repo_id = _auto_repo_id(task)
+        typer.secho(f"(--repo-id omitted — using auto-generated '{repo_id}')", fg="yellow")
     cfg = _load()
     lead = _require(cfg, "leader")
     foll = _require(cfg, "follower")
@@ -875,6 +903,14 @@ def policy_test(
     device: str = typer.Option(None, "--device", help="cuda / mps / cpu (auto-detected if omitted)."),
     steps: int = typer.Option(20, "--steps", help="Number of inference steps to run."),
     episode: int = typer.Option(0, "--episode", help="Episode to take frames from."),
+    rename_map: str = typer.Option(
+        None,
+        "--rename_map",
+        help="JSON dict mapping dataset observation keys to the policy's expected names "
+        "(same option as `train`/`eval`), e.g. "
+        '\'{"observation.images.front": "observation.images.camera1"}\'. Required if the '
+        "dataset's camera keys don't match what the checkpoint was fine-tuned with.",
+    ),
 ) -> None:
     """Offline inference smoke test: run the trained policy on recorded dataset frames — no robot needed.
 
@@ -892,6 +928,7 @@ def policy_test(
     dev = device or _auto_device()
     pol_path = _resolve_policy(policy)
     repo = _resolve_repo(repo_id)
+    renames = json.loads(rename_map) if rename_map else {}
 
     typer.secho(f"Loading dataset {repo} (downloads from the Hub if not cached locally)...", fg="blue")
     dataset = LeRobotDataset(repo, video_backend=_safe_video_backend())
@@ -902,12 +939,15 @@ def policy_test(
     cfg = PreTrainedConfig.from_pretrained(pol_path)
     cfg.pretrained_path = pol_path
     cfg.device = dev
-    pol = make_policy(cfg, ds_meta=dataset.meta)
+    pol = make_policy(cfg, ds_meta=dataset.meta, rename_map=renames)
     pre, post = make_pre_post_processors(
         policy_cfg=cfg,
         pretrained_path=pol_path,
         dataset_stats=dataset.meta.stats,
-        preprocessor_overrides={"device_processor": {"device": dev}},
+        preprocessor_overrides={
+            "device_processor": {"device": dev},
+            "rename_observations_processor": {"rename_map": renames},
+        },
     )
     for p in (pol, pre, post):
         if hasattr(p, "reset"):
