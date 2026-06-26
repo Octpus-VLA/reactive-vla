@@ -9,6 +9,9 @@ version = "0.1.0"
 # HPCモジュール環境がLD_LIBRARY_PATHに古いシステムlibstdc++ (/lib64) を載せてくるため、
 # conda env側のlibを優先させてGLIBCXX_3.4.30以降を要求するffmpeg/torchcodec等のロードを通す。
 LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+# データセット/キャッシュを ~/.cache/huggingface ではなく workspace 配下に保存する。
+# record/train/eval/replay/viz とも HF_LEROBOT_HOME を参照する (cli/so101.py の解決ロジック含む)。
+HF_LEROBOT_HOME = "$PIXI_PROJECT_ROOT/datasets"
 
 [tasks]
 fmt = "ruff format ."
