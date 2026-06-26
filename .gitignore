@@ -223,6 +223,9 @@ __marimo__/
 # lerobot training outputs (checkpoints, logs)
 outputs/
 
+# lerobot datasets/cache (HF_LEROBOT_HOME, set in pixi.toml [activation.env])
+datasets/
+
 # PBS job stdout/stderr (qsub -j oe -> <jobname>.o<jobid> / .e<jobid> in PBS_O_WORKDIR)
 *.o[0-9]*
 *.e[0-9]*
