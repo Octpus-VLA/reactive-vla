@@ -12,6 +12,7 @@ first octpus vla project repository
 - **Imitation-learning fine-tuning** — fine-tune `smolvla_base` or `pi0_base` on a SO-101 dataset (or train a policy from scratch), with optional W&B logging and Hugging Face Hub push. See [Fine-tuning](#fine-tuning) below.
 - **HPC batch training** — submit fine-tuning as a PBS job instead of running `pixi run train` interactively. The PBS scripts themselves aren't included in this repo (they bake in site-specific queue/`group_list` settings) — see the template in [Fine-tuning](#fine-tuning) and drop your own under `jobs/` (gitignored).
 - **MuJoCo simulation** — a bundled SO-ARM100 model + `sim_so101` robot adapter let you exercise the async RTC rollout path without physical hardware. See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md).
+- **Sim success-rate evaluation** (`pixi run sim-eval`) — run a trained policy in the MuJoCo sim and score task success rate / success step (a Lift-style criterion: did the cube get picked up). Add `--repo-id rollout_<name>` to also record video/dataset. See [Inference](#inference) below.
 
 ### SO-101 commands (`pixi run <command>`)
 
@@ -33,9 +34,10 @@ first octpus vla project repository
 | `push-policy --checkpoint ... --repo-id name` | Push a trained checkpoint to the Hub |
 | `policy-test --policy ... --repo-id ...` | Offline inference smoke test (no robot needed) |
 | `eval --policy ... --task "..." --repo-id rollout_name` | Run a trained policy on the follower and record eval episodes |
+| `sim-eval --policy ... [--repo-id rollout_name]` | Run a trained policy in the MuJoCo sim and score success rate / success step |
 | `hf-login` / `wandb-login` | One-time login helpers (needed before pushing/logging) |
 
-Run `pixi run <command> --help` for the full flag list. Flags placed after a forwarding command (`teleop`, `record`, `train`, `eval`, `replay`) are passed straight through to the underlying `lerobot-*` CLI.
+Run `pixi run <command> --help` for the full flag list. Flags placed after a forwarding command (`teleop`, `record`, `train`, `eval`, `sim-eval`, `replay`) are passed straight through to the underlying `lerobot-*` CLI.
 
 ## Setup
 
@@ -217,6 +219,8 @@ Swap `--policy-path lerobot/smolvla_base` for `--policy-path lerobot/pi0_base` a
 
 ## Inference
 
+### Real hardware
+
 ```bash
 pixi run eval --policy <checkpoint> --task "..." --repo-id rollout_<name>
 ```
@@ -231,6 +235,40 @@ For moving-cube trials, the RTC detector can use the `front` camera as a visibil
 pixi run eval --rtc --detector red_cube_speed --detector-camera front --require-target-visible \
   --policy <checkpoint> --task "pick up the red cube" --repo-id rollout_front_gate
 ```
+
+### Simulation
+
+![sim-eval scene: SO-101 arm, green conveyor belt with a red cube, and a white drop-off box](docs/sim-eval-scene.png)
+
+```bash
+# static pick — belt stopped (default), cube parked in front of the robot, graspable
+pixi run sim-eval --policy <checkpoint> --episodes 10 --episode-time 30 --task "Grab the cube"
+
+# dynamic pick — belt running: the cube is fed from the -y end and carried across the front
+pixi run sim-eval --policy <checkpoint> --belt-speed 0.06 --episode-steps 600 --task "Grab the cube"
+
+# move the whole belt + box + cube layout (meters from the robot base to the belt's near edge)
+pixi run sim-eval --policy <checkpoint> --belt-distance 0.18
+
+# add --repo-id to also record a video/dataset (id must start with 'rollout_')
+pixi run sim-eval --policy <checkpoint> --repo-id rollout_sim_test
+```
+
+Runs the policy against the bundled MuJoCo SO-101 model (`assets/so101/scene_cube.xml`, DeepMind Menagerie's `robotstudio_so101` — the real SO-101's own CAD-derived model, not the older SO-ARM100) instead of real hardware, and scores task success: a robosuite/LIBERO-style **Lift criterion** — success once the cube's z-position rises `--success-height` (default 0.05m) above where it rested at connect time. This is read directly from privileged sim state and never shown to the policy. Each run writes a JSON summary (`success_rate`, `mean_success_step`, and a per-episode breakdown) to `outputs/eval/<policy-slug>/<timestamp>/summary.json` (override with `--output`).
+
+`sim-eval` uses two sim cameras: `camera1=wrist_cam` (the upstream model's built-in eye-in-hand camera at the real SO-101's CAD-derived wrist mount — fed to the policy, matching the real rig's only visual input) and `overview` (a fixed external view added in `scene_cameras.xml`, *not* fed to the policy, but recorded into the dataset with `--repo-id` for a future cube-position/velocity predictor). If the policy expects more cameras than `camera1` (`camera2`/`camera3`), the missing ones are automatically padded with a masked dummy image.
+
+No recording happens unless `--repo-id` is given — by default `sim-eval` only measures success rate / success step. Add `--rtc` to evaluate with async RTC inference instead of the default sync engine.
+
+`--episode-time` is a wall-clock budget, not sim time — how many steps actually fit in it depends on render/inference speed (CPU-rendering SO-101's meshes measured at ~374ms/call for both cameras). Add `--episode-steps N` for a reproducible step count regardless of speed; an episode ends at whichever of `--episode-time` / `--episode-steps` is hit first (e.g. `--episode-steps 600` for ~20s of sim time at `--fps 30`).
+
+`scene_cube.xml` also sets up the dynamic pick-and-place scene (toward this project's research goal), laid out front-to-back along `+x`: **robot (origin) → green conveyor belt (center `x=0.19`, near edge 14 cm from the base) → white drop-off box (center `x=0.30`)**, all within the arm's ~0.40 m reach. The belt is modeled after a real tabletop unit — a static frame (aluminium base/side rails, dark end caps, motor box) plus a moving green surface that runs as a *treadmill*: a velocity-actuated slide joint drives it, but `SimSO101.send_action()` zeroes its position every control step, so the green never visibly drifts (the static frame is what reads as a belt) while friction still drags the resting cube along at belt speed. **`--belt-speed M_PER_S`** sets the belt speed (constant for the whole rollout, default `0` = stationary), and also decides where the cube starts:
+- **stationary (`--belt-speed 0`, the default)** — the cube is parked directly **in front of the robot** (`y=0`), graspable on the spot, for static pick evaluation.
+- **running (`--belt-speed > 0`)** — the cube is fed from the belt's `-y` end and carried through the reachable region (the arm's home pose faces the front-center where it crosses); the belt spans `y∈[-0.30, 0.30]`, so an un-picked cube falls off the `+y` end like a real conveyor.
+
+**`--belt-distance M`** (default `0.14` = 14 cm from the robot base to the belt's near edge) slides the whole belt + box + cube layout forward/back together; keep the cube within the arm's ~0.40 m reach. The white box is where picked cubes are meant to go, but **box-placement success detection isn't implemented yet** (success is still the lift criterion above).
+
+`sim-eval` sets `MUJOCO_GL=osmesa` (CPU rendering) by default, not `egl` (GPU). Measured on a GH200 node: rendering and CUDA policy inference contending for the same GPU under `egl` stalled individual render calls by ~19s, while plain CPU rendering (~80ms/frame) has no such contention and was ~80x faster end to end. Override with `export MUJOCO_GL=egl` if you have a setup where that doesn't apply (e.g. rendering and inference on separate GPUs). See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) for more on the sim setup, and note this is still an early integration: the bundled cube placement / camera framing are provisional, and a policy trained on real hardware images shouldn't be expected to succeed zero-shot in the sim's rendered observations.
 
 ## Roadmap
 

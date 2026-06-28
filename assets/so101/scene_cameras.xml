@@ -1,0 +1,12 @@
+<mujoco model="so101 scene with cameras">
+  <!-- Menagerie の scene.xml（pristine）に、固定外部視点カメラ overview を足したもの。
+       upstream の scene.xml は由来保持のため未編集。wrist_cam は so101.xml にすでに
+       定義済み（実機のグリッパー手首カメラマウントに対応、CAD由来）なのでここでは
+       追加しない。overview はアーム+作業領域全体を見る固定視点（このポリシーは
+       使わないが、repo-id 指定時の録画でデータセットへ残し、将来の predictor へ渡す）。 -->
+  <include file="scene.xml"/>
+
+  <worldbody>
+    <camera name="overview" pos="0.0 -0.55 0.45" quat="0.8709726 0.4596775 -0.0809837 -0.1534436"/>
+  </worldbody>
+</mujoco>

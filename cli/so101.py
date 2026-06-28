@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -906,6 +907,168 @@ def evaluate(
     _add_cameras_display(cmd, foll, extra, cameras, display)
     _add_max_rel(cmd, extra, max_rel)
     _run(cmd + extra, cleanup_rerun=display and not keep_viewer)
+
+
+@app.command("sim-eval", context_settings=PASSTHROUGH)
+def sim_eval(
+    ctx: typer.Context,
+    policy: str = typer.Option(
+        ..., "--policy", help="Trained policy: a local checkpoint dir or a Hub repo id."
+    ),
+    task: str = typer.Option("Grab the cube", "--task", help="Natural-language task description."),
+    mjcf_path: str = typer.Option(
+        "assets/so101/scene_cube.xml",
+        "--mjcf-path",
+        help="MuJoCo scene XML. Must include the success-check body (default scene has 'cube').",
+    ),
+    episodes: int = typer.Option(10, "--episodes", help="Number of episodes to run."),
+    episode_time: float = typer.Option(30, "--episode-time", help="Max wall-clock seconds per episode."),
+    episode_steps: int = typer.Option(
+        None,
+        "--episode-steps",
+        help="Max control steps per episode, in addition to --episode-time (whichever hits first "
+        "ends the episode). --episode-time alone is wall-clock, not sim time, so the actual step "
+        "count it produces varies with render/inference speed — set this for a reproducible step "
+        "count (e.g. 600 for ~20s of sim time at --fps 30).",
+    ),
+    reset_time: float = typer.Option(3, "--reset-time", help="Seconds held between episodes."),
+    belt_speed: float = typer.Option(
+        0.0,
+        "--belt-speed",
+        help="Conveyor belt speed in m/s (scene_cube.xml's belt; 0 = stationary, the default). "
+        "Constant for the whole rollout, not a per-step control.",
+    ),
+    belt_distance: float = typer.Option(
+        0.14,
+        "--belt-distance",
+        help="Distance in meters from the robot base to the belt's near edge (default 0.14 = "
+        "14cm). Slides the whole belt + box + cube layout forward/back. Keep the cube within "
+        "the arm's ~0.40m reach; the start pose is tuned for the default, so large changes may "
+        "not frame the cube in the wrist camera.",
+    ),
+    success_body: str = typer.Option(
+        "cube", "--success-body", help="MJCF body to track for success (must have a freejoint)."
+    ),
+    success_height: float = typer.Option(
+        0.05,
+        "--success-height",
+        help="Meters the body must rise above its resting height to count as lifted.",
+    ),
+    fps: int = typer.Option(30, "--fps"),
+    output: str = typer.Option(
+        None,
+        "--output",
+        help="Where to write the per-episode + aggregate JSON summary. "
+        "Defaults to outputs/eval/<policy-slug>/<MMDD_HHMM>/summary.json.",
+    ),
+    rtc: bool = typer.Option(
+        False, "--rtc", help="Use async Real-Time Chunking inference instead of the default sync engine."
+    ),
+    execution_horizon: int = typer.Option(10, "--execution-horizon", help="RTC only: see `eval --help`."),
+    queue_threshold: int = typer.Option(30, "--queue-threshold", help="RTC only: see `eval --help`."),
+    repo_id: str = typer.Option(
+        None,
+        "--repo-id",
+        help="Eval dataset id to also record video/frames for every episode (must start with "
+        "'rollout_', e.g. rollout_sim_test). Omit to skip recording (success metrics only).",
+    ),
+    push: bool = typer.Option(False, "--push/--no-push", help="Upload the recorded dataset to the Hub."),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Delete an existing local eval dataset with this id first."
+    ),
+) -> None:
+    """Run a trained policy in the MuJoCo sim and score task success rate / success step.
+
+    Success is "the tracked body was lifted `--success-height` above where it
+    rested" (a robosuite/LIBERO-style Lift criterion) — read directly from
+    privileged sim state, never shown to the policy. Requires the scene to
+    have a freejoint body named `--success-body` (the bundled `scene_cube.xml`
+    has one named "cube"). See docs/rtc-sim-rollout.md for background on the
+    sim setup.
+
+    No recording happens unless `--repo-id` is given — by default this only
+    measures success rate / success step, exactly like the rest of `eval`'s
+    docs above describe.
+    """
+    # Headless offscreen rendering by default — without it MuJoCo falls back to a
+    # windowed GLFW context and crashes on HPC nodes with no DISPLAY. osmesa (CPU
+    # rendering) rather than egl (GPU rendering) because sim-eval interleaves
+    # MuJoCo renders with CUDA policy inference every control tick, and egl+CUDA
+    # contending for the same GPU was measured to stall individual renders by
+    # ~19s (see docs/rtc-sim-rollout.md); osmesa has no such GPU contention,
+    # even though a single render is nominally slower in isolation (~80ms vs
+    # ~6ms). Respect an explicit override (e.g. MUJOCO_GL=egl on a multi-GPU
+    # node where rendering and inference can live on separate devices).
+    os.environ.setdefault("MUJOCO_GL", "osmesa")
+
+    policy_slug = policy.rstrip("/").split("/")[-1].replace(".", "_")
+    ts = datetime.datetime.now().strftime("%m%d_%H%M")
+    out_path = output or f"outputs/eval/{policy_slug}/{ts}/summary.json"
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+
+    dataset_args = []
+    if repo_id:
+        repo = _resolve_repo(repo_id, for_creation=True)
+        name = repo.split("/")[-1]
+        if not name.startswith("rollout_"):
+            raise typer.BadParameter(
+                f"lerobot requires rollout dataset names to start with 'rollout_' (you gave '{name}'). "
+                f"Use e.g. --repo-id rollout_sim_test."
+            )
+        _maybe_overwrite(repo, overwrite)
+        dataset_args = [
+            f"--dataset.repo_id={repo}",
+            f"--dataset.fps={fps}",
+            f"--dataset.push_to_hub={'true' if push else 'false'}",
+        ]
+        typer.secho(f"(recording episodes to {repo})", fg="yellow")
+
+    cmd = [
+        "lerobot-rollout",
+        f"--policy.path={_resolve_policy(policy)}",
+        "--robot.type=sim_so101",
+        f"--robot.mjcf_path={Path(mjcf_path).resolve()}",
+        # camera1=wrist_cam: the real SO-101 rig's only camera is wrist-mounted
+        # (eye-in-hand); wrist_cam is the Menagerie so101.xml's built-in camera
+        # at that same CAD-derived mount, so that's the policy's only input
+        # camera too. overview: fixed external view (added in scene_cameras.xml,
+        # not part of upstream so101.xml), not consumed by this policy but
+        # recorded into the dataset (with --repo-id) for a future cube-position/
+        # velocity predictor. The rollout context rejects any robot camera the
+        # policy doesn't expect unless --rename_map is set (it skips that check
+        # entirely) — the no-op entry below exists only to take that branch.
+        "--robot.cameras={camera1: {mujoco_name: wrist_cam, width: 320, height: 240}, "
+        "overview: {mujoco_name: overview, width: 320, height: 240}}",
+        '--rename_map={"observation.images.overview": "observation.images.overview"}',
+        f"--robot.control_fps={fps}",
+        f"--robot.belt_speed={belt_speed}",
+        f"--robot.belt_distance={belt_distance}",
+        f"--robot.success.body_name={success_body}",
+        f"--robot.success.height_m={success_height}",
+        "--strategy.type=eval",
+        f"--strategy.num_episodes={episodes}",
+        f"--strategy.episode_time_s={episode_time}",
+        f"--strategy.reset_time_s={reset_time}",
+        f"--strategy.output_path={out_path}",
+        f"--task={task}",
+        f"--fps={fps}",
+        "--play_sounds=false",
+        *dataset_args,
+    ]
+    if episode_steps is not None:
+        cmd.append(f"--strategy.episode_steps={episode_steps}")
+    if rtc:
+        cmd += [
+            "--inference.type=rtc",
+            f"--inference.rtc.execution_horizon={execution_horizon}",
+            f"--inference.queue_threshold={queue_threshold}",
+            "--policy.rtc_config.enabled=true",
+            f"--policy.rtc_config.execution_horizon={execution_horizon}",
+        ]
+    else:
+        cmd.append("--inference.type=sync")
+    typer.secho(f"(summary will be written to {out_path})", fg="yellow")
+    _run(cmd + list(ctx.args))
 
 
 @app.command(context_settings=PASSTHROUGH)
