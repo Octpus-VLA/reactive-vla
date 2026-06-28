@@ -54,13 +54,18 @@ pixi run eval --rtc --detector red_cube_speed \
 
 ### MuJoCo モデル（リポジトリ同梱・clone 不要）
 
-DeepMind Menagerie の SO-ARM100（Apache-2.0）を `assets/so_arm100/` に同梱済み。
+DeepMind Menagerie の SO-101（`robotstudio_so101`、Apache-2.0）を `assets/so101/` に同梱済み。実機と同じ The Robot Studio SO-101（旧SO-ARM100ではない）の公式CAD由来モデルで、actuator/joint 名（`shoulder_pan/shoulder_lift/elbow_flex/wrist_flex/wrist_roll/gripper`）が `so101_follower` のモーター名と一致するため `SimSO101Config.joint_map` は恒等写像。
 
-- `scene_cameras.xml` … SmolVLA 用カメラ（`cam1`/`cam2`）を足したもの。**ロールアウトではこれを使う**
-- `scene.xml` … upstream そのまま（カメラなし）
-- `so_arm100.xml` + `assets/` … モデル本体。actuator/joint 名（`Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll/Jaw`）は `SimSO101Config.joint_map` の既定と一致
+- `scene_cameras.xml` … upstream `scene.xml` に、プロジェクト追加の固定外部カメラ `overview` を足したもの。**ロールアウトではこれを使う**
+- `scene_cube.xml` … `scene_cameras.xml` に掴む対象の `cube`（free joint）と `home` キーフレームを足したもの。**`sim-eval` ではこれを使う**
+- `scene.xml` / `scene_box.xml` … upstream そのまま（`scene_box.xml` は別の掴み対象 `box` 付きのデモシーン、本プロジェクトでは未使用）
+- `so101.xml` + `assets/` … モデル本体。`gripper` ボディの子に upstream 定義済みの手首カメラ `wrist_cam` がある（実機SO-101の手首マウントカメラの実CADデータに基づく、プロジェクトでの追加調整は無し）
 
-> カメラ位置・向きは `scene_cameras.xml` 内の暫定値。実機の撮影アングルに合わせて要調整（`mujoco.viewer` で当たりを付けると早い）。
+カメラは2種類: `overview`（固定の外部視点、プロジェクト追加）と `wrist_cam`（グリッパーに追従するeye-in-hand視点、upstream添付の実CADマウント）。`pixi run sim-eval`の既定は **`camera1=wrist_cam`**（実機SO-101の唯一の視覚入力＝手首カメラに対応、ポリシーに渡す）と **`overview`**（固定外部視点、現行ポリシーには渡さず`--repo-id`での録画時にデータセットへ残すだけ。今後のcube位置/速度predictor用）。
+
+> `overview` カメラの位置・向きと `cube` の配置は実際に `SimSO101` でレンダリングしながら経験的に決めた値（`wrist_cam` は upstream 定義のため未調整）。シーン構成を変えた場合は要調整。
+
+**初期姿勢は `home` キーフレーム**（`scene_cube.xml` に定義）を使う。upstream の qpos=0（全関節ゼロ）はアームが直立し、`wrist_cam` がほぼ水平に部屋の奥を見るだけで、リーチ範囲内のどこも映らない（録画で確認済み: 全フレームで cube が一度も映らなかった）。joint の `ref` 属性はこれを解決しない（`ref` は qpos の数値の意味を再定義するだけで、実際の静止姿勢は変えない — 同じ pos/quat になる）。`SimSO101.connect()` は MJCF に `home` という名前の `<key>` があれば `mj_resetDataKeyframe` で適用し、なければ qpos=0 にフォールバックする。
 
 ### 環境とレンダラ
 
@@ -147,8 +152,8 @@ pixi run lerobot-rollout \
   --policy.path=outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
   --policy.rtc_config.enabled=true --policy.rtc_config.execution_horizon=10 \
   --robot.type=sim_so101 \
-  --robot.mjcf_path=$PWD/assets/so_arm100/scene_cameras.xml \
-  --robot.cameras='{camera1: {mujoco_name: cam1, width: 320, height: 240}, camera2: {mujoco_name: cam2, width: 320, height: 240}}' \
+  --robot.mjcf_path=$PWD/assets/so101/scene_cube.xml \
+  --robot.cameras='{camera1: {mujoco_name: wrist_cam, width: 320, height: 240}, camera2: {mujoco_name: overview, width: 320, height: 240}}' \
   --robot.control_fps=30 \
   --inference.type=rtc --inference.rtc.execution_horizon=10 --inference.queue_threshold=30 \
   --fps=30 --task="Grab the cube" --duration=30
@@ -164,8 +169,8 @@ pixi run lerobot-rollout \
   --policy.path=outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
   --policy.rtc_config.enabled=true --policy.rtc_config.execution_horizon=10 \
   --robot.type=sim_so101 \
-  --robot.mjcf_path=$PWD/assets/so_arm100/scene_cameras.xml \
-  --robot.cameras='{camera1: {mujoco_name: cam1, width: 320, height: 240}, camera2: {mujoco_name: cam2, width: 320, height: 240}}' \
+  --robot.mjcf_path=$PWD/assets/so101/scene_cube.xml \
+  --robot.cameras='{camera1: {mujoco_name: wrist_cam, width: 320, height: 240}, camera2: {mujoco_name: overview, width: 320, height: 240}}' \
   --robot.control_fps=30 \
   --inference.type=rtc --inference.rtc.execution_horizon=10 --inference.queue_threshold=30 \
   --fps=30 --task="Grab the cube" \
@@ -185,6 +190,44 @@ pixi run lerobot-rollout \
 - **`--dataset.repo_id` は `rollout_` で始める**必要がある（例 `local/rollout_*`）。違うと検証エラー。
 - **`--dataset.push_to_hub=false`** を明示（既定 `true`）。
 - `pynput` 無し（`Headless environment detected`）はそのまま。`episode_time_s` 経過で自動終了する。
+
+---
+
+## 評価（成功率 / 成功ステップ数） {#eval-success-rate}
+
+`--strategy.type=eval`（CLI ラッパーは `pixi run sim-eval`）で、複数エピソードを流して **成功率** と **成功ステップ数**（何ステップ目で成功したか）を集計できる。
+
+```bash
+pixi run sim-eval \
+  --policy outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
+  --episodes 10 --episode-time 30 \
+  --task "Grab the cube"
+
+# --repo-id を付けると動画/データセットも録画する（rollout_ 接頭辞必須、episodic と同じ規約）
+pixi run sim-eval \
+  --policy outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
+  --episodes 10 --episode-time 30 \
+  --task "Grab the cube" \
+  --repo-id rollout_sim_eval_test
+```
+
+- **成功判定（Lift 基準）**: `scene_cube.xml` の `cube` body（free joint）の z 位置が、接続時の静止高さから `--success-height`（既定 0.05m）以上持ち上がったら成功。robosuite/LIBERO の "Lift" タスクと同じ考え方で、把持して持ち上げない限り発生しない（接触だけでは上がらない）。
+- 判定はポリシーの入出力には一切影響しない。`SimSO101.check_success()` が MuJoCo の `mj_data.qpos` を直接読むだけで、`get_observation()` には乗らない（privileged な評価専用の読み取り）。
+- 出力は `outputs/eval/<policy-slug>/<タイムスタンプ>/summary.json`（`--output` で変更可）に、エピソードごとの `success` / `success_step` / `num_steps` と、全体の `success_rate` / `mean_success_step` が書かれる。
+- **録画は `--repo-id` を渡したときだけ**。省略すると `episodic` 同様データセット/動画は一切作られず、評価のみを高速に回せる。
+- `--rtc` を付ければ RTC 非同期推論でも評価できる（`eval` コマンドと同じ `--execution-horizon` / `--queue-threshold`）。
+- **box への配置やコンベアはまだ実装していない**。今の成功判定は「cube を持ち上げたか」までで、「box に入れたか」は対象外。
+- **`sim-eval` は `MUJOCO_GL=osmesa`（CPU描画）が既定**。理由は下の「検証で分かったこと」を参照（GPUで描画すると推論と競合して致命的に遅くなる）。
+- **`sim-eval` のカメラは `camera1=wrist_cam`（ポリシー入力）+ `overview`（録画専用、`--repo-id`時のみデータセットに残る）**。`overview` はポリシーが期待しない観測キーなので、`--rename_map`（no-opエントリ）を渡してロールアウト起動時の visual feature 一致チェックをスキップしている（[context.py](https://github.com/Octpus-VLA/reactive-vla/blob/main/third_party/lerobot/src/lerobot/rollout/context.py)）。ポリシーが `camera2`/`camera3` も期待する場合は masked dummy image で自動的に埋められる。
+- **`--episode-time` は壁時計（実時間）秒数で、sim 時間ではない**。実際に何ステップ進むかはレンダリング/推論の速度に依存する（SO-101の重いメッシュを`osmesa`でCPU描画する場合、`get_observation()`が2カメラで約374ms/callかかる実測あり）。再現可能なステップ数が欲しい場合は **`--episode-steps`**（`--strategy.episode_steps`）を使う。これは `--episode-time` と併用され、どちらか早く達した方でエピソードが終わる（例: `--fps 30` で sim時間20秒相当にしたいなら `--episode-steps 600`）。
+- **動くコンベアベルト + 配置先の箱**（CLAUDE.md記載の Research Goal「動くcubeの把持→箱へ配置」用）: `scene_cube.xml` の前後配置は **robot(原点) → 緑ベルト(中心 x=0.19、近縁がロボット基部から14cm) → 白い箱(中心 x=0.30)** の一直線（+x が奥）。いずれもアームのリーチ（実測 約0.40m）内。距離は **`--belt-speed`**（速度）と **`--belt-distance`**（ロボット基部→ベルト近縁の距離、既定0.14m）で調整できる。`--belt-distance` はベルト・箱・cube のレイアウト全体を一括で前後にスライドする（`SimSO101Config.belt_distance`、`connect()` で `body_pos` と cube 初期 qpos を移動）。home姿勢のアーム角は既定距離に合わせて調整済みなので、大きく変えると wrist_cam に cube が収まらなくなる点に注意。
+  - ベルトは実機の卓上ベルトコンベアに似せて、**固定フレーム**（`conveyor_frame` の各ジオメトリ＝アルミ製ベース/サイドレール・暗色のエンドキャップ・モーター箱。すべて静止・`contype/conaffinity=0` の見た目専用）と、**動く表面スラブ**（`belt` ボディ。slide joint + 速度アクチュエータ `belt_motor`）の2部構成。
+  - 速度は `--belt-speed`（m/s、既定0=静止、ロールアウト全体で一定）。cubeはスラブの上に乗っているだけで、Coulomb摩擦で引っ張られる（cubeの速度を直接スクリプトしているわけではない）。
+  - **トレッドミル方式**: `SimSO101.send_action()` が毎制御ステップでスラブの slide 位置を 0 に戻す（速度=qvelには触れない）。接触面は動いて見えるので摩擦は効くが、緑のスラブ自体は世界座標で動かない（固定フレームがベルトらしさを出す）。これをしないと緑のスラブが流れて数秒でカメラから消える（=以前の「ベルトごと動く」状態）。
+  - ベルトは有限長（`y∈[-0.30, 0.30]`）。cube は -y 端から +y 端へ運ばれ、拾われなければ実機同様に +y 端で落ちる。
+  - **白い箱** (`box` ボディ、上面開放) はベルトの奥（far 側）に固定設置。掴んだ cube を入れる先で、リーチ内にあるが、**箱への配置を検出する成功判定は未実装**（現状の成功判定は cube の lift のまま。「箱へ配置」の判定は今後の課題）。
+
+汎用ロボットの `Robot` 抽象には `check_success()` を要求していない（duck-typed）。`so101_follower` など実機側は実装していないため、`eval` ストラテジーで実機を使うと常に `success=False` になる（警告ログが出る）。
 
 ---
 
@@ -275,6 +318,7 @@ weight:      1.0       │      1.0 → 0.0（線形）       │            0.0
 - **RTC は実際に効いている**: GH200 でも `real_delay ≈ 18 frames`（30fps で約 0.6s）。つまり推論レイテンシで凍結区間が実際に発生しており、レイテンシ注入なしで RTC の検証になっている。
 - ログの `Indexes diff is not equal to real delay (indexes_diff=17, real_delay=18)` は **off-by-1 の bookkeeping ズレで無害**（RTC は `real_delay` を採用して継続）。毎ステップ出てうるさいだけ。
 - ロールアウト終了時の `EGLError`（renderer の `__del__`）は後始末の雑音で、正常完走には無関係。
+- **`MUJOCO_GL=egl`（GPU描画）と CUDA 推論を同じプロセスで交互に呼ぶと、片方が数秒〜十数秒詰まる**: GH200 上の実測で、`get_observation()`（EGL描画）と `select_action()`（CUDA推論）を単体でタイミング計測するとどちらもミリ秒〜1秒程度で速いのに、`sim-eval` の実ロールアウトループ内で交互に呼ぶと `get_observation()` が単発で約19秒詰まることがあった（`eval.py` のループに一時的に `time.perf_counter()` を仕込んで特定）。EGLのGPUコンテキストとCUDAのコンテキストが同じGPU上で切り替えコストを起こしていると見られる。**`MUJOCO_GL=osmesa`（CPU描画）に切り替えると解消する**: CPU描画自体は1フレーム約80ms（GPU版の約6msより遅い）だが、GPUの奪い合いが無くなるぶん合計では大幅に速くなる（実測: 15秒間で2ステップ→175ステップ）。`sim-eval` は既定で `osmesa` を使う。
 
 ---
 

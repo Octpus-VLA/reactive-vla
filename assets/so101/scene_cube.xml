@@ -1,0 +1,102 @@
+<mujoco model="so101 scene with cameras + conveyor + box + cube">
+  <!-- scene_cameras.xml（アーム+床+カメラ）に、緑のコンベアベルト・白い箱・掴む対象の
+       cube を足したもの。前後配置（+x が奥）: robot(0) → belt(中心 x=0.19, 近縁が基部
+       から14cm) → box(中心 x=0.30)。いずれもアームのリーチ（実測 約0.40m）内。
+       ベルトは「固定フレーム（サイドレール/エンドキャップ/モーター箱）」と「動く表面
+       スラブ」の2部構成。表面スラブは slide joint + 速度アクチュエータで接線速度を持つが、
+       SimSO101.send_action() が毎制御ステップで位置を 0 に戻すトレッドミル方式なので、
+       緑は動かず上に乗った cube だけが摩擦で運ばれる。cube はベルト +y 端 (y=0.30) まで
+       運ばれると実機同様に端から落ちる。箱は掴んだ cube を入れる先（配置検出は今後の課題、
+       現状の成功判定は lift のまま）。 -->
+  <include file="scene_cameras.xml"/>
+
+  <asset>
+    <material name="belt_surface_mat" rgba="0.094 0.451 0.184 1" reflectance="0.05" shininess="0.2"/>
+    <material name="belt_alu_mat" rgba="0.78 0.80 0.83 1" reflectance="0.5" shininess="0.7"/>
+    <material name="belt_dark_mat" rgba="0.13 0.13 0.15 1" reflectance="0.2"/>
+    <material name="box_white_mat" rgba="0.90 0.90 0.92 1" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Static conveyor frame: aluminium base + side rails + dark end brackets + a motor
+         box, all fixed (no joint) and visual-only (contype/conaffinity 0) — purely to
+         read as a real belt rig. (Black end rollers removed per request.) Only the green
+         top surface (the "belt" body below) actually moves. Centered at x=0.19 (near edge
+         14cm from the robot base), spanning y in [-0.30, 0.30]; the +x side carries the
+         motor box. -->
+    <body name="conveyor_frame" pos="0.19 0 0">
+      <geom name="belt_base" type="box" pos="0 0 0.014" size="0.05 0.30 0.012"
+            material="belt_alu_mat" contype="0" conaffinity="0"/>
+      <geom name="belt_rail_left" type="box" pos="-0.06 0 0.022" size="0.007 0.335 0.022"
+            material="belt_alu_mat" contype="0" conaffinity="0"/>
+      <geom name="belt_rail_right" type="box" pos="0.06 0 0.022" size="0.007 0.335 0.022"
+            material="belt_alu_mat" contype="0" conaffinity="0"/>
+      <geom name="belt_endcap_neg" type="box" pos="0 -0.327 0.02" size="0.067 0.012 0.022"
+            material="belt_dark_mat" contype="0" conaffinity="0"/>
+      <geom name="belt_endcap_pos" type="box" pos="0 0.327 0.02" size="0.067 0.012 0.022"
+            material="belt_dark_mat" contype="0" conaffinity="0"/>
+      <geom name="belt_motor_box" type="box" pos="0.092 0.18 0.03" size="0.025 0.04 0.028"
+            material="belt_dark_mat" contype="0" conaffinity="0"/>
+      <geom name="belt_motor_knob" type="cylinder" fromto="0.117 0.18 0.03  0.131 0.18 0.03"
+            size="0.012" material="belt_dark_mat" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- The moving belt surface (treadmill). The slide joint + velocity actuator give it
+         a tangential speed; SimSO101.send_action() snaps its slide position back to 0
+         every control step, so the green never visibly drifts (the frame above is what
+         makes it read as a belt) and only drags the resting cube along by friction. -->
+    <body name="belt" pos="0.19 0 0">
+      <joint name="belt_slide" type="slide" axis="0 1 0" damping="0"/>
+      <geom name="belt_top" type="box" pos="0 0 0.034" size="0.05 0.30 0.006"
+            material="belt_surface_mat" friction="1.5 0.05 0.001" condim="4"
+            solref="0.01 1" mass="0.5"/>
+    </body>
+
+    <!-- White open-top box for placing picked cubes, just beyond the belt's far edge,
+         centered in front of the robot (y=0) at x=0.30 (within reach). Static (no joint).
+         Inner cavity ~0.06 x 0.06, walls ~0.044 tall. -->
+    <body name="box" pos="0.30 0 0">
+      <geom name="box_floor" type="box" pos="0 0 0.004" size="0.04 0.04 0.004"
+            material="box_white_mat"/>
+      <geom name="box_wall_near" type="box" pos="-0.038 0 0.024" size="0.004 0.04 0.02"
+            material="box_white_mat"/>
+      <geom name="box_wall_far" type="box" pos="0.038 0 0.024" size="0.004 0.04 0.02"
+            material="box_white_mat"/>
+      <geom name="box_wall_left" type="box" pos="0 -0.038 0.024" size="0.04 0.004 0.02"
+            material="box_white_mat"/>
+      <geom name="box_wall_right" type="box" pos="0 0.038 0.024" size="0.04 0.004 0.02"
+            material="box_white_mat"/>
+    </body>
+
+    <!-- Cube rides the belt top (z=0.04) starting at the -y end, carried toward +y
+         through the arm's reachable region as the belt runs. -->
+    <body name="cube" pos="0.19 -0.20 0.055">
+      <freejoint name="cube_free"/>
+      <geom name="cube" type="box" size="0.015 0.015 0.015"
+            rgba="0.9 0.2 0.2 1" mass="0.02"
+            friction="1.0 0.05 0.001"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- ctrl = belt surface speed in m/s along +y. Variable per rollout via
+         SimSO101Config.belt_speed (belt-speed flag in `pixi run sim-eval`); 0 by
+         default so existing non-belt behavior is unchanged unless explicitly requested. -->
+    <velocity name="belt_motor" joint="belt_slide" kv="50" ctrlrange="-0.3 0.3"/>
+  </actuator>
+
+  <!-- Project addition: "home" keyframe so the rollout starts crouched and facing the
+       cube's belt-start position instead of upstream's straight-up qpos=0 rest pose.
+       Without this, wrist_cam's view at qpos=0 points almost horizontally across the
+       room — well past anything the arm can reach — so the policy never sees the cube
+       until it has already moved blind for several steps. SimSO101.connect() applies this
+       keyframe if present (falls back to qpos=0 otherwise). Arm values found empirically:
+       swept shoulder_pan/shoulder_lift/elbow_flex/wrist_flex within their joint ranges,
+       kept poses where the cube's center projects inside wrist_cam's FOV, picked one
+       centered in frame with the gripper a few cm short of the cube. qpos order is
+       [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper,
+       belt_slide, cube(7)]. -->
+  <keyframe>
+    <key name="home" qpos="0.3490659 -0.9599311 0.3490659 1.5707963 0 0 0 0.19 -0.20 0.055 1 0 0 0"/>
+  </keyframe>
+</mujoco>
