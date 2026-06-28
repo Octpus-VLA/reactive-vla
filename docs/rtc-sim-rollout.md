@@ -204,17 +204,20 @@ pixi run lerobot-rollout \
 ![wrist_cam から見た cube とベルト](./sim-eval-wrist.png)
 
 ```bash
+# 静的ピック — ベルト停止（既定）、cube はロボット正面に置かれ、その場で把持可能
 pixi run sim-eval \
   --policy outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
   --episodes 10 --episode-time 30 \
   --task "Grab the cube"
 
+# 動的ピック — ベルト稼働: cube は -y 端から供給され正面を横切るように運ばれる
+pixi run sim-eval --policy <ckpt> --belt-speed 0.06 --episode-steps 600 --task "Grab the cube"
+
+# ベルト+箱+cube のレイアウト全体を前後に移動（ロボット基部→ベルト近縁の距離、メートル）
+pixi run sim-eval --policy <ckpt> --belt-distance 0.18
+
 # --repo-id を付けると動画/データセットも録画する（rollout_ 接頭辞必須、episodic と同じ規約）
-pixi run sim-eval \
-  --policy outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
-  --episodes 10 --episode-time 30 \
-  --task "Grab the cube" \
-  --repo-id rollout_sim_eval_test
+pixi run sim-eval --policy <ckpt> --repo-id rollout_sim_eval_test
 ```
 
 - **成功判定（Lift 基準）**: `scene_cube.xml` の `cube` body（free joint）の z 位置が、接続時の静止高さから `--success-height`（既定 0.05m）以上持ち上がったら成功。robosuite/LIBERO の "Lift" タスクと同じ考え方で、把持して持ち上げない限り発生しない（接触だけでは上がらない）。
