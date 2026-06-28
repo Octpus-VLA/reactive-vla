@@ -212,16 +212,13 @@ RTC（非同期 Real-Time Chunking）の非同期ロールアウトは現状 **M
 
 ```bash
 # 静的ピック — ベルト停止（既定）、cube はロボット正面に置かれ、その場で把持可能
-pixi run sim-eval --policy <checkpoint> --episodes 10 --episode-time 30 --task "Grab the cube"
+pixi run sim-eval --policy <checkpoint> --episodes 10 --episode-time 30 --task "Grab the cube" --repo-id rollout_sim_test
 
 # 動的ピック — ベルト稼働: cube は -y 端から供給され正面を横切るように運ばれる
-pixi run sim-eval --policy <checkpoint> --belt-speed 0.06 --episode-steps 600 --task "Grab the cube"
+pixi run sim-eval --policy <checkpoint> --belt-speed 0.06 --episode-steps 600 --task "Grab the cube" --repo-id rollout_sim_test
 
 # ベルト+箱+cube のレイアウト全体を前後に移動（ロボット基部→ベルト近縁の距離、メートル）
-pixi run sim-eval --policy <checkpoint> --belt-distance 0.18
-
-# --repo-id を付けると動画/データセットも録画する（id は rollout_ 接頭辞必須）
-pixi run sim-eval --policy <checkpoint> --repo-id rollout_sim_test
+pixi run sim-eval --policy <checkpoint> --belt-distance 0.18 --repo-id rollout_sim_test
 ```
 
 実機の代わりに、同梱の MuJoCo SO-101 モデル（`assets/so101/scene_cube.xml`、DeepMind Menagerieの`robotstudio_so101` — 実機SO-101自体のCAD由来モデルで、旧SO-ARM100ではない）に対してポリシーを実行し、タスクの成功を判定します。robosuite/LIBERO 風の **Lift 基準**: cube の z 位置が、接続時の静止高さから `--success-height`（既定 0.05m）以上持ち上がったら成功。これは MuJoCo の内部状態を直接読むだけで、ポリシーの観測には一切乗りません。実行ごとに `success_rate` / `mean_success_step` とエピソードごとの内訳を `outputs/eval/<policy>/<タイムスタンプ>/summary.json`（`--output` で変更可）に書き出します。
