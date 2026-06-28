@@ -208,12 +208,20 @@ RTC（非同期 Real-Time Chunking）の非同期ロールアウトは現状 **M
 
 ### シミュレーション
 
+![sim-eval シーン: SO-101アーム・赤いcubeを載せた緑のベルトコンベア・白い配置先の箱](docs/sim-eval-scene.png)
+
 ```bash
+# 静的ピック — ベルト停止（既定）、cube はロボット正面に置かれ、その場で把持可能
 pixi run sim-eval --policy <checkpoint> --episodes 10 --episode-time 30 --task "Grab the cube"
 
-# --repo-id を付けると動画/データセットも録画する（rollout_ 接頭辞必須）
-pixi run sim-eval --policy <checkpoint> --episodes 10 --episode-time 30 --task "Grab the cube" \
-  --repo-id rollout_sim_test
+# 動的ピック — ベルト稼働: cube は -y 端から供給され正面を横切るように運ばれる
+pixi run sim-eval --policy <checkpoint> --belt-speed 0.06 --episode-steps 600 --task "Grab the cube"
+
+# ベルト+箱+cube のレイアウト全体を前後に移動（ロボット基部→ベルト近縁の距離、メートル）
+pixi run sim-eval --policy <checkpoint> --belt-distance 0.18
+
+# --repo-id を付けると動画/データセットも録画する（id は rollout_ 接頭辞必須）
+pixi run sim-eval --policy <checkpoint> --repo-id rollout_sim_test
 ```
 
 実機の代わりに、同梱の MuJoCo SO-101 モデル（`assets/so101/scene_cube.xml`、DeepMind Menagerieの`robotstudio_so101` — 実機SO-101自体のCAD由来モデルで、旧SO-ARM100ではない）に対してポリシーを実行し、タスクの成功を判定します。robosuite/LIBERO 風の **Lift 基準**: cube の z 位置が、接続時の静止高さから `--success-height`（既定 0.05m）以上持ち上がったら成功。これは MuJoCo の内部状態を直接読むだけで、ポリシーの観測には一切乗りません。実行ごとに `success_rate` / `mean_success_step` とエピソードごとの内訳を `outputs/eval/<policy>/<タイムスタンプ>/summary.json`（`--output` で変更可）に書き出します。
@@ -222,7 +230,11 @@ pixi run sim-eval --policy <checkpoint> --episodes 10 --episode-time 30 --task "
 
 `--episode-time` は壁時計（実時間）秒数で、sim時間ではありません。実際に何ステップ進むかはレンダリング/推論の速度に依存します（SO-101の重いメッシュをCPU描画すると2カメラで約374ms/callという実測あり）。速度に関係なく再現可能なステップ数が欲しい場合は `--episode-steps N` を付けてください。`--episode-time`/`--episode-steps` のどちらか早く達した方でエピソードが終わります（例: `--fps 30` でsim時間20秒相当にしたいなら `--episode-steps 600`）。
 
-`scene_cube.xml` は動的ピック&プレースのシーン（本プロジェクトの研究目標）も用意しています。+x を奥として **ロボット(原点) → 緑のコンベアベルト(中心 x=0.19、近縁が基部から14cm) → 白い配置先の箱(中心 x=0.30)** の一直線配置で、いずれもアームのリーチ（約0.40m）内です。ベルトは実機の卓上ベルトコンベアに似せて、固定フレーム（アルミのベース/サイドレール・暗色のエンドキャップ・モーター箱）＋動く緑の表面、の2部構成です。表面は**トレッドミル方式**で動きます — 速度アクチュエータ付きの slide joint で駆動しつつ、`SimSO101.send_action()` が毎制御ステップで位置を 0 に戻すため、緑自体は見た目上は動かず（固定フレームがベルトらしさを出す）、摩擦だけが上に乗った cube をベルト速度で運びます。`--belt-speed M_PER_S`（m/s、ロールアウト全体で一定、既定0=静止）で速度を設定できます。ベルトは `y∈[-0.30, 0.30]` の範囲で、cube は -y 端からリーチ領域を通って運ばれ、間に合わず拾われなければ +y 端で実機のベルト同様に落ちます。`--belt-distance M`（既定 0.14 = ロボット基部からベルト近縁まで14cm）でベルト+箱+cube のレイアウト全体を前後にスライドできます（cube がアームのリーチ 約0.40m 内に収まる範囲で）。白い箱は掴んだ cube を入れる先ですが、**箱への配置の成功判定は未実装**です（成功判定は上記の lift 基準のまま）。
+`scene_cube.xml` は動的ピック&プレースのシーン（本プロジェクトの研究目標）も用意しています。+x を奥として **ロボット(原点) → 緑のコンベアベルト(中心 x=0.19、近縁が基部から14cm) → 白い配置先の箱(中心 x=0.30)** の一直線配置で、いずれもアームのリーチ（約0.40m）内です。ベルトは実機の卓上ベルトコンベアに似せて、固定フレーム（アルミのベース/サイドレール・暗色のエンドキャップ・モーター箱）＋動く緑の表面、の2部構成です。表面は**トレッドミル方式**で動きます — 速度アクチュエータ付きの slide joint で駆動しつつ、`SimSO101.send_action()` が毎制御ステップで位置を 0 に戻すため、緑自体は見た目上は動かず（固定フレームがベルトらしさを出す）、摩擦だけが上に乗った cube をベルト速度で運びます。**`--belt-speed M_PER_S`**（m/s、ロールアウト全体で一定、既定`0`=静止）でベルト速度を設定でき、これに応じて cube の開始位置も変わります:
+- **停止時（`--belt-speed 0`、既定）** — cube は**ロボットの正面**（`y=0`）に置かれ、その場で把持可能。静的なピック評価向け。
+- **稼働時（`--belt-speed > 0`）** — cube はベルトの `-y` 端から供給され、リーチ領域を横切るように運ばれる（アームのhome姿勢は cube が通る正面中央を向いている）。ベルトは `y∈[-0.30, 0.30]` なので、拾われなかった cube は +y 端で実機同様に落ちる。
+
+**`--belt-distance M`**（既定 `0.14` = ロボット基部からベルト近縁まで14cm）でベルト+箱+cube のレイアウト全体を前後にスライドできます（cube がアームのリーチ 約0.40m 内に収まる範囲で）。白い箱は掴んだ cube を入れる先ですが、**箱への配置の成功判定は未実装**です（成功判定は上記の lift 基準のまま）。
 
 `sim-eval` は2つのシムカメラを使います: `camera1=wrist_cam`（upstreamモデルに最初から定義済みのeye-in-handカメラ、実機SO-101の手首マウントのCADデータに基づく。ポリシーに渡す観測で、実機SO-101の唯一の視覚入力に対応）と `overview`（`scene_cameras.xml`で追加した固定の外部視点。ポリシーには**渡さず**、`--repo-id`での録画時にデータセットへ残すだけ。今後のcube位置/速度predictor用）。ポリシーが`camera1`以外（`camera2`/`camera3`）も期待する場合は、無い分はマスク付きのダミー画像で自動的に埋められます。
 

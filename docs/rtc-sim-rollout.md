@@ -197,6 +197,12 @@ pixi run lerobot-rollout \
 
 `--strategy.type=eval`（CLI ラッパーは `pixi run sim-eval`）で、複数エピソードを流して **成功率** と **成功ステップ数**（何ステップ目で成功したか）を集計できる。
 
+![sim-eval シーン: SO-101アーム・赤cube付き緑ベルトコンベア・白い配置先の箱](./sim-eval-scene.png)
+
+左から SO-101 アーム → 緑のコンベアベルト（赤い cube が乗る）→ 白い配置先の箱。手首カメラ（`wrist_cam`）から見た画は次のとおり（ポリシーへの唯一の視覚入力）:
+
+![wrist_cam から見た cube とベルト](./sim-eval-wrist.png)
+
 ```bash
 pixi run sim-eval \
   --policy outputs/train/smolvla_base/svla_so101_pickplace/<タイムスタンプ>/checkpoints/last/pretrained_model \
@@ -223,8 +229,9 @@ pixi run sim-eval \
 - **動くコンベアベルト + 配置先の箱**（CLAUDE.md記載の Research Goal「動くcubeの把持→箱へ配置」用）: `scene_cube.xml` の前後配置は **robot(原点) → 緑ベルト(中心 x=0.19、近縁がロボット基部から14cm) → 白い箱(中心 x=0.30)** の一直線（+x が奥）。いずれもアームのリーチ（実測 約0.40m）内。距離は **`--belt-speed`**（速度）と **`--belt-distance`**（ロボット基部→ベルト近縁の距離、既定0.14m）で調整できる。`--belt-distance` はベルト・箱・cube のレイアウト全体を一括で前後にスライドする（`SimSO101Config.belt_distance`、`connect()` で `body_pos` と cube 初期 qpos を移動）。home姿勢のアーム角は既定距離に合わせて調整済みなので、大きく変えると wrist_cam に cube が収まらなくなる点に注意。
   - ベルトは実機の卓上ベルトコンベアに似せて、**固定フレーム**（`conveyor_frame` の各ジオメトリ＝アルミ製ベース/サイドレール・暗色のエンドキャップ・モーター箱。すべて静止・`contype/conaffinity=0` の見た目専用）と、**動く表面スラブ**（`belt` ボディ。slide joint + 速度アクチュエータ `belt_motor`）の2部構成。
   - 速度は `--belt-speed`（m/s、既定0=静止、ロールアウト全体で一定）。cubeはスラブの上に乗っているだけで、Coulomb摩擦で引っ張られる（cubeの速度を直接スクリプトしているわけではない）。
+  - **cube の開始位置は速度で変わる**（`connect()`）: **停止時（`--belt-speed 0`）はロボット正面（y=0）に置かれ、その場で把持可能**（静的評価向け）。**稼働時は -y 端から供給**され、リーチ領域（home姿勢が向く正面中央 y=0 付近）を横切り、拾われなければ +y 端で落ちる。
   - **トレッドミル方式**: `SimSO101.send_action()` が毎制御ステップでスラブの slide 位置を 0 に戻す（速度=qvelには触れない）。接触面は動いて見えるので摩擦は効くが、緑のスラブ自体は世界座標で動かない（固定フレームがベルトらしさを出す）。これをしないと緑のスラブが流れて数秒でカメラから消える（=以前の「ベルトごと動く」状態）。
-  - ベルトは有限長（`y∈[-0.30, 0.30]`）。cube は -y 端から +y 端へ運ばれ、拾われなければ実機同様に +y 端で落ちる。
+  - ベルトは有限長（`y∈[-0.30, 0.30]`）。
   - **白い箱** (`box` ボディ、上面開放) はベルトの奥（far 側）に固定設置。掴んだ cube を入れる先で、リーチ内にあるが、**箱への配置を検出する成功判定は未実装**（現状の成功判定は cube の lift のまま。「箱へ配置」の判定は今後の課題）。
 
 汎用ロボットの `Robot` 抽象には `check_success()` を要求していない（duck-typed）。`so101_follower` など実機側は実装していないため、`eval` ストラテジーで実機を使うと常に `success=False` になる（警告ログが出る）。

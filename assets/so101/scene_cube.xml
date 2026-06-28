@@ -86,17 +86,18 @@
   </actuator>
 
   <!-- Project addition: "home" keyframe so the rollout starts crouched and facing the
-       cube's belt-start position instead of upstream's straight-up qpos=0 rest pose.
-       Without this, wrist_cam's view at qpos=0 points almost horizontally across the
-       room — well past anything the arm can reach — so the policy never sees the cube
-       until it has already moved blind for several steps. SimSO101.connect() applies this
-       keyframe if present (falls back to qpos=0 otherwise). Arm values found empirically:
-       swept shoulder_pan/shoulder_lift/elbow_flex/wrist_flex within their joint ranges,
-       kept poses where the cube's center projects inside wrist_cam's FOV, picked one
-       centered in frame with the gripper a few cm short of the cube. qpos order is
-       [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper,
-       belt_slide, cube(7)]. -->
+       belt's reachable region in front of the robot (y=0) instead of upstream's
+       straight-up qpos=0 rest pose. Without this, wrist_cam's view at qpos=0 points
+       almost horizontally across the room — well past anything the arm can reach — so
+       the policy never sees the cube. SimSO101.connect() applies this keyframe if
+       present (falls back to qpos=0 otherwise). The arm faces the front-centre (y=0)
+       grasp spot; SimSO101.connect() then parks the cube there for static eval
+       (belt_speed=0) or feeds it from the -y end when the belt runs. Arm values found
+       empirically: swept shoulder_pan/shoulder_lift/elbow_flex/wrist_flex within their
+       joint ranges, kept poses where the front-centre cube projects inside wrist_cam's
+       FOV, picked one with the gripper a few cm short of it. qpos order is [shoulder_pan,
+       shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper, belt_slide, cube(7)]. -->
   <keyframe>
-    <key name="home" qpos="0.3490659 -0.9599311 0.3490659 1.5707963 0 0 0 0.19 -0.20 0.055 1 0 0 0"/>
+    <key name="home" qpos="-0.1745329 -0.9599311 0.3490659 1.5707963 0 0 0 0.19 0.0 0.055 1 0 0 0"/>
   </keyframe>
 </mujoco>
