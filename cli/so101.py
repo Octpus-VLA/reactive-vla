@@ -825,6 +825,11 @@ def evaluate(
         "--detector-camera",
         help="Camera key the detector watches (defaults to a registered camera named 'overall', else the first). Must be a registered camera.",
     ),
+    require_target_visible: bool = typer.Option(
+        False,
+        "--require-target-visible/--no-require-target-visible",
+        help="RTC detector only: suppress queue-based planning until the detector sees the target.",
+    ),
 ) -> None:
     """Run a trained policy on the follower and record eval episodes (lerobot-rollout, episodic strategy).
 
@@ -891,6 +896,8 @@ def evaluate(
             f"--inference.supervisor.detector.type={detector}",
             f"--inference.supervisor.camera={cam_key}",
         ]
+        if require_target_visible:
+            cmd.append("--inference.supervisor.require_target_visible=true")
     if episode_time is not None:
         cmd.append(f"--dataset.episode_time_s={episode_time}")
     if reset_time is not None:

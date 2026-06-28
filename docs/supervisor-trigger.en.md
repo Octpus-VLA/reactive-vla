@@ -73,6 +73,7 @@ Implemented detector output:
 ```python
 DetectorOutput(
     replan_now=True,
+    target_visible=True,
     center_px=(x, y),
     speed_px_s=180.0,
     effective_chunk_size_threshold=0.7,
@@ -83,9 +84,11 @@ DetectorOutput(
 Capabilities:
 
 - Tracks the red cube with an HSV mask
+- Reports `target_visible=False` when the red cube is not visible
 - Estimates `speed_px_s` from mask-centroid motion
 - Raises `effective_chunk_size_threshold` when the cube is fast, so observations are sent while more queued actions remain
 - Fires an immediate replan when speed exceeds `supervisor.detector.urgent_speed_px_s`
+- If `supervisor.require_target_visible=true`, holds queue-based RTC replanning until the detector sees the target
 - Keeps existing behavior unchanged by default, because `motion` remains the default detector
 
 Conceptually:
@@ -93,6 +96,7 @@ Conceptually:
 ```text
 slow cube -> lower chunk_size_threshold, stability-biased
 fast cube -> higher chunk_size_threshold, earlier replan
+target not visible -> hold queue-based RTC replan when required
 cube exceeds urgent speed -> urgent replan independent of queue level
 ```
 
@@ -158,6 +162,13 @@ pixi run eval --rtc --detector red_cube_speed --detector-camera overall \
 # fine-tune via passthrough: --inference.supervisor.detector.urgent_speed_px_s=300
 ```
 
+Use the front camera as a target-visibility gate:
+
+```bash
+pixi run eval --rtc --detector red_cube_speed --detector-camera front --require-target-visible \
+  --policy <ckpt> --task "Grab the cube" --repo-id rollout_front_gate
+```
+
 Supervisor wiring:
 
 | Option | Meaning |
@@ -166,6 +177,7 @@ Supervisor wiring:
 | `supervisor.camera` | Camera key to watch (must match an observation image key) |
 | `supervisor.poll_fps` | Camera polling rate (**async path only**; the RTC path uses the control-loop frame) |
 | `supervisor.cooldown_s` | Minimum seconds between triggers |
+| `supervisor.require_target_visible` | RTC only: suppress queue-based replanning while the detector reports `target_visible=false` |
 | `supervisor.detector.type` | `motion` or `red_cube_speed` |
 
 `detector.type=motion`:

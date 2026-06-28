@@ -225,6 +225,13 @@ Runs the policy on real hardware and records evaluation episodes (internally `le
 
 Async RTC (Real-Time Chunking) rollout is currently **MuJoCo-sim only** ([docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md)). There's no wrapper for it in `cli/so101.py`, so trying it on real hardware means assembling `lerobot-rollout --robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'` by hand (equivalent to swapping `--robot.type` in the sim commands).
 
+For moving-cube trials, the RTC detector can use the `front` camera as a visibility gate. With `--require-target-visible`, queue-based replanning is held back until `red_cube_speed` sees the red cube, preventing the policy from planning on an observation where the target is not yet in view:
+
+```bash
+pixi run eval --rtc --detector red_cube_speed --detector-camera front --require-target-visible \
+  --policy <checkpoint> --task "pick up the red cube" --repo-id rollout_front_gate
+```
+
 ## Roadmap
 
 ### Target task
