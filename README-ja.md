@@ -206,11 +206,11 @@ pixi run eval --policy <checkpoint> --task "..." --repo-id rollout_<name>
 
 RTC（非同期 Real-Time Chunking）の非同期ロールアウトは現状 **MuJoCoシム限定**（[docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md)）です。実機で試す場合は `cli/so101.py` にラッパーが無いため、`lerobot-rollout --robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'` のように手動で組み立てる必要があります（シム向けコマンドの `--robot.type` を差し替えたものに相当）。
 
-動く cube の実験では、RTC detector を `front` camera の visibility gate として使えます。`--require-target-visible` を付けると、`red_cube_speed` が赤い cube を見るまで queue-based replan を待たせるため、target が視野に入っていない observation で policy が先に plan してしまうのを避けられます。
+動く cube の実験では、RTC の overhead predictor を使い、overhead camera 上で赤 cube を推論レイテンシ（PE gap）分だけ前進させた画像を policy に入力できます（[docs/overhead-predictor.md](docs/overhead-predictor.md) を参照）。
 
 ```bash
-pixi run eval --rtc --detector red_cube_speed --detector-camera front --require-target-visible \
-  --policy <checkpoint> --task "pick up the red cube" --repo-id rollout_front_gate
+pixi run eval --rtc --predict-cube --predictor-camera overall \
+  --policy <checkpoint> --task "pick up the red cube" --repo-id rollout_predict
 ```
 
 ### シミュレーション

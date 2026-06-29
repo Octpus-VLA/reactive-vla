@@ -8,7 +8,7 @@ Documentation site for the Octpus VLA project. Built on `lerobot`, it covers the
 - [SmolVLA Fine-tuning](smolvla-finetuning.md) — a trial run fine-tuning the pretrained SmolVLA on a SO-101 dataset
 - [lerobot Editable Setup](lerobot-editable-setup.md) — editing lerobot directly to add custom policies
 - [RTC Sim Rollout](rtc-sim-rollout.md) — run the SmolVLA + RTC async rollout in a MuJoCo simulation
-- [Supervisor-Triggered Replan](supervisor-trigger.md) — event-triggered camera supervision and the future dynamic-horizon design
+- [Overhead Camera Predictor for Dynamic Pick](overhead-predictor.md) — advance the cube forward by the inference latency on the overhead camera and feed it to the VLA
 
 ## Links
 
