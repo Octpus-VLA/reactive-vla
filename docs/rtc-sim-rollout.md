@@ -80,6 +80,8 @@ export MUJOCO_GL=egl         # ヘッドレスGPU描画。ダメなら osmesa（
 
 **RTC は推論時のテクニックなので、学習側に RTC 用の処理は一切不要**（普通の SmolVLA ファインチューニングでよい）。RTC の有無はロールアウト時に切り替える。
 
+> 実機データで学習したチェックポイントは sim レンダリング観測に対して分布外で、`sim-eval` ではほぼ動かない（real→sim 視覚ギャップ）。これを埋める sim 観測の学習データは、スクリプト IK エキスパートで自動収集できる → [sim スクリプトエキスパート収集](sim-scripted-collect.md)（`pixi run sim-collect`）。
+
 GPU ノードでの学習は PBS ジョブ [`jobs/train_smolvla.pbs`](https://github.com/Octpus-VLA/reactive-vla/blob/main/jobs/train_smolvla.pbs) を使う（リポジトリ root から投入）：
 
 ```bash

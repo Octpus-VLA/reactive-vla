@@ -1080,6 +1080,82 @@ def sim_eval(
     _run(cmd + list(ctx.args))
 
 
+@app.command("sim-collect")
+def sim_collect(
+    repo_id: str = typer.Option(
+        None,
+        "--repo-id",
+        help="Dataset id to create ('name' → prefixed with your HF user, or 'user/name'). "
+        "Auto-generated as '<task-slug>/<timestamp>' if omitted.",
+    ),
+    task: str = typer.Option("Grab the cube", "--task", help="Natural-language task stored with the dataset."),
+    mjcf_path: str = typer.Option(
+        "assets/so101/scene_cube.xml", "--mjcf-path", help="MuJoCo scene XML (needs the 'cube' and 'box' bodies)."
+    ),
+    episodes: int = typer.Option(20, "--episodes", help="Number of demo episodes to record."),
+    max_steps: int = typer.Option(240, "--max-steps", help="Hard cap on control steps per episode."),
+    fps: int = typer.Option(30, "--fps", help="Control rate; also the dataset fps. Keep matched to training."),
+    belt_speed: float = typer.Option(
+        0.0,
+        "--belt-speed",
+        help="Conveyor speed (m/s). 0 = static cube parked in front of the robot; non-zero feeds the "
+        "cube from the -y end and the expert leads a constant-velocity intercept.",
+    ),
+    belt_distance: float = typer.Option(0.14, "--belt-distance", help="Metres from the robot base to the belt's near edge."),
+    jitter: float = typer.Option(
+        0.03, "--jitter", help="Uniform ±metres of xy randomisation on the cube start, so demos span grasp positions."
+    ),
+    seed: int = typer.Option(0, "--seed", help="RNG seed for cube-position randomisation (reproducible datasets)."),
+    push: bool = typer.Option(False, "--push/--no-push", help="Upload the recorded dataset to the Hugging Face Hub."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Delete an existing local dataset with this id first."),
+) -> None:
+    """Record scripted-expert pick-and-place demos in the MuJoCo sim (no hardware).
+
+    A privileged IK controller (reads the cube's true pose, solves IK, servos the
+    arm) drives the SimSO101 robot through approach → grasp → carry → place, and
+    every (observation, action) pair is written to a LeRobotDataset with the same
+    schema `record` produces — so `pixi run train` consumes it directly. The point
+    is sim-*rendered* observations: fine-tuning a real-data SmolVLA on these closes
+    the real→sim visual gap that leaves it motionless in `sim-eval`. The expert's
+    privileged cube reads never enter the dataset (only wrist cam + joint state +
+    commanded targets). Design notes: docs/sim-scripted-collect.md.
+    """
+    # Headless GPU rendering: unlike sim-eval (which interleaves CUDA policy
+    # inference and contends for the GPU, so it forces osmesa), collection runs no
+    # policy, so egl is both safe and much faster per render. Respect an override.
+    os.environ.setdefault("MUJOCO_GL", "egl")
+
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import sim_collect
+
+    if not repo_id:
+        repo_id = _auto_repo_id(task)
+        typer.secho(f"(--repo-id omitted — using auto-generated '{repo_id}')", fg="yellow")
+    repo = _resolve_repo(repo_id, for_creation=True)
+    _maybe_overwrite(repo, overwrite)
+    typer.secho(f"(recording {episodes} scripted episodes to {repo})", fg="yellow")
+    summary = sim_collect.collect(
+        repo_id=repo,
+        task=task,
+        mjcf_path=str(Path(mjcf_path).resolve()),
+        episodes=episodes,
+        max_steps=max_steps,
+        fps=fps,
+        belt_speed=belt_speed,
+        belt_distance=belt_distance,
+        jitter_xy=jitter,
+        seed=seed,
+        push=push,
+    )
+    typer.secho(
+        f"recorded {summary['episodes']} episodes, "
+        f"{sum(summary['success'])} placed in box ({summary['success_rate']:.0%})",
+        fg="green",
+    )
+
+
 @app.command(context_settings=PASSTHROUGH)
 def replay(
     ctx: typer.Context,
