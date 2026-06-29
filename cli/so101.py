@@ -949,10 +949,16 @@ def sim_eval(
     success_body: str = typer.Option(
         "cube", "--success-body", help="MJCF body to track for success (must have a freejoint)."
     ),
+    success_criterion: str = typer.Option(
+        "lift",
+        "--success-criterion",
+        help="How an episode counts as a success: 'lift' (body raised --success-height above "
+        "rest) or 'place_in_box' (body settled inside the box). Default 'lift'.",
+    ),
     success_height: float = typer.Option(
         0.05,
         "--success-height",
-        help="Meters the body must rise above its resting height to count as lifted.",
+        help="'lift' only: meters the body must rise above its resting height to count as lifted.",
     ),
     fps: int = typer.Option(30, "--fps"),
     output: str = typer.Option(
@@ -979,12 +985,14 @@ def sim_eval(
 ) -> None:
     """Run a trained policy in the MuJoCo sim and score task success rate / success step.
 
-    Success is "the tracked body was lifted `--success-height` above where it
-    rested" (a robosuite/LIBERO-style Lift criterion) — read directly from
-    privileged sim state, never shown to the policy. Requires the scene to
-    have a freejoint body named `--success-body` (the bundled `scene_cube.xml`
-    has one named "cube"). See docs/rtc-sim-rollout.md for background on the
-    sim setup.
+    Success is read directly from privileged sim state (never shown to the
+    policy), via `--success-criterion`:
+    - `lift` (default): the tracked body rose `--success-height` above where it
+      rested (a robosuite/LIBERO-style Lift criterion).
+    - `place_in_box`: the tracked body came to rest inside the scene's `box`
+      body (pick-and-place). Pair with `--belt-speed` for the dynamic task.
+    Requires a freejoint body named `--success-body` (the bundled
+    `scene_cube.xml` has one named "cube"). See docs/rtc-sim-rollout.md.
 
     No recording happens unless `--repo-id` is given — by default this only
     measures success rate / success step, exactly like the rest of `eval`'s
@@ -1044,6 +1052,7 @@ def sim_eval(
         f"--robot.belt_speed={belt_speed}",
         f"--robot.belt_distance={belt_distance}",
         f"--robot.success.body_name={success_body}",
+        f"--robot.success.criterion={success_criterion}",
         f"--robot.success.height_m={success_height}",
         "--strategy.type=eval",
         f"--strategy.num_episodes={episodes}",
