@@ -13,6 +13,7 @@ first octpus vla project repository
 - **HPCバッチ学習** — `pixi run train` をインタラクティブに実行する代わりに、PBSジョブとして投入できます。PBSスクリプト自体はキュー名・`group_list` などサイト固有の設定を含むため、このリポジトリには含めていません。[ファインチューニング](#ファインチューニング)節のテンプレートを自分のサイト向けに調整して `jobs/` 以下に置いてください（`jobs/` は `.gitignore` 済みです）。
 - **MuJoCoシミュレーション** — 同梱の SO-101 モデル（実機と同じCAD由来、DeepMind Menagerieの`robotstudio_so101`）と `sim_so101` ロボットアダプタにより、実機無しで RTC 非同期ロールアウト経路を検証できます。詳細は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照。
 - **シム上での成功率評価**（`pixi run sim-eval`）— 学習済みポリシーをMuJoCoシム上で実行し、タスク成功率・成功ステップ数を計測（Lift基準: cubeを持ち上げたか）。`--repo-id rollout_<name>` を付ければ動画/データセットも録画できます。詳細は下記の[推論](#推論)を参照。
+- **シム上でのデモ収集**（`pixi run sim-collect`）— 特権状態を使うスクリプトIKエキスパートがMuJoCoシム内で pick-and-place を実演し、(観測, アクション) を `record` と同形式の `LeRobotDataset` に書き出します。実機データで学習したポリシーは sim レンダリング観測に対して分布外（real→sim 視覚ギャップ）なので、このシム観測データでファインチューニングしてギャップを埋めるのが狙いです。詳細は [docs/sim-scripted-collect.md](docs/sim-scripted-collect.md) を参照。
 
 ### SO-101 コマンド （`pixi run <command>`）
 
@@ -35,6 +36,7 @@ first octpus vla project repository
 | `policy-test --policy ... --repo-id ...` | オフライン推論の動作確認（ロボット不要） |
 | `eval --policy ... --task "..." --repo-id rollout_name` | 学習済みポリシーを follower で実行し評価エピソードを記録 |
 | `sim-eval --policy ... [--repo-id rollout_name]` | 学習済みポリシーをMuJoCoシム上で実行し成功率・成功ステップ数を評価 |
+| `sim-collect --episodes N --repo-id name` | スクリプトIKエキスパートでMuJoCoシム内の pick-and-place デモを収集（ファインチューニング用） |
 | `hf-login` / `wandb-login` | push/ロギング前の初回ログイン |
 
 各コマンドの全フラグは `pixi run <command> --help` で確認できます。転送系コマンド（`teleop`・`record`・`train`・`eval`・`sim-eval`・`replay`）の後に置いた引数は、対応する `lerobot-*` CLI にそのまま渡されます。

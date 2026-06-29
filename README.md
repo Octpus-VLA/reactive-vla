@@ -13,6 +13,7 @@ first octpus vla project repository
 - **HPC batch training** — submit fine-tuning as a PBS job instead of running `pixi run train` interactively. The PBS scripts themselves aren't included in this repo (they bake in site-specific queue/`group_list` settings) — see the template in [Fine-tuning](#fine-tuning) and drop your own under `jobs/` (gitignored).
 - **MuJoCo simulation** — a bundled SO-ARM100 model + `sim_so101` robot adapter let you exercise the async RTC rollout path without physical hardware. See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md).
 - **Sim success-rate evaluation** (`pixi run sim-eval`) — run a trained policy in the MuJoCo sim and score task success rate / success step (a Lift-style criterion: did the cube get picked up). Add `--repo-id rollout_<name>` to also record video/dataset. See [Inference](#inference) below.
+- **Sim demo collection** (`pixi run sim-collect`) — a scripted IK expert (driven by privileged sim state) performs pick-and-place in the MuJoCo sim and writes the (observation, action) pairs to a `LeRobotDataset` in the same schema `record` produces. A policy trained on real-hardware images is out of distribution on the sim's rendered observations (the real→sim visual gap); fine-tuning on this sim-rendered data is how you close it. See [docs/sim-scripted-collect.md](docs/sim-scripted-collect.md).
 
 ### SO-101 commands (`pixi run <command>`)
 
@@ -35,6 +36,7 @@ first octpus vla project repository
 | `policy-test --policy ... --repo-id ...` | Offline inference smoke test (no robot needed) |
 | `eval --policy ... --task "..." --repo-id rollout_name` | Run a trained policy on the follower and record eval episodes |
 | `sim-eval --policy ... [--repo-id rollout_name]` | Run a trained policy in the MuJoCo sim and score success rate / success step |
+| `sim-collect --episodes N --repo-id name` | Collect MuJoCo pick-and-place demos with a scripted IK expert (for fine-tuning) |
 | `hf-login` / `wandb-login` | One-time login helpers (needed before pushing/logging) |
 
 Run `pixi run <command> --help` for the full flag list. Flags placed after a forwarding command (`teleop`, `record`, `train`, `eval`, `sim-eval`, `replay`) are passed straight through to the underlying `lerobot-*` CLI.
