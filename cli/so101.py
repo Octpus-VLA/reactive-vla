@@ -1093,13 +1093,25 @@ def sim_collect(
         "assets/so101/scene_cube.xml", "--mjcf-path", help="MuJoCo scene XML (needs the 'cube' and 'box' bodies)."
     ),
     episodes: int = typer.Option(20, "--episodes", help="Number of demo episodes to record."),
-    max_steps: int = typer.Option(240, "--max-steps", help="Hard cap on control steps per episode."),
+    max_steps: int = typer.Option(
+        320,
+        "--max-steps",
+        help="Hard cap on control steps per episode. A slow belt needs more (the cube takes longer to "
+        "travel into reach): ~320 covers down to ~0.03 m/s; raise it for slower belts.",
+    ),
     fps: int = typer.Option(30, "--fps", help="Control rate; also the dataset fps. Keep matched to training."),
     belt_speed: float = typer.Option(
         0.0,
         "--belt-speed",
         help="Conveyor speed (m/s). 0 = static cube parked in front of the robot; non-zero feeds the "
-        "cube from the -y end and the expert leads a constant-velocity intercept.",
+        "cube from the -y end and the reactive expert tracks it. With --belt-speed-max this is the "
+        "low end of a per-episode random range.",
+    ),
+    belt_speed_max: float = typer.Option(
+        None,
+        "--belt-speed-max",
+        help="If set (and > --belt-speed), each episode draws a belt speed uniformly from "
+        "[--belt-speed, --belt-speed-max], so one dataset spans a range of conveyor speeds.",
     ),
     belt_distance: float = typer.Option(0.14, "--belt-distance", help="Metres from the robot base to the belt's near edge."),
     jitter: float = typer.Option(
@@ -1134,7 +1146,17 @@ def sim_collect(
         repo_id = _auto_repo_id(task)
         typer.secho(f"(--repo-id omitted — using auto-generated '{repo_id}')", fg="yellow")
     repo = _resolve_repo(repo_id, for_creation=True)
+    # Pushing needs a real Hub namespace; a local-only id can't be uploaded. Fail
+    # early (before a long collection run) rather than at the push at the end.
+    if push and repo.startswith("local/"):
+        raise typer.BadParameter(
+            "--push needs a Hugging Face account: run `pixi run hf-login` first, or pass "
+            "--repo-id <hf-user>/<name>. (Not logged in, so the id resolved to "
+            f"'{repo}', which can't be pushed.)"
+        )
     _maybe_overwrite(repo, overwrite)
+    if belt_speed_max is not None and belt_speed_max > belt_speed:
+        typer.secho(f"(belt speed varies per episode in [{belt_speed}, {belt_speed_max}] m/s)", fg="yellow")
     typer.secho(f"(recording {episodes} scripted episodes to {repo})", fg="yellow")
     summary = sim_collect.collect(
         repo_id=repo,
@@ -1144,6 +1166,7 @@ def sim_collect(
         max_steps=max_steps,
         fps=fps,
         belt_speed=belt_speed,
+        belt_speed_max=belt_speed_max,
         belt_distance=belt_distance,
         jitter_xy=jitter,
         seed=seed,

@@ -68,11 +68,40 @@ class GraspConfig:
     # clamp it (see probe: ctrl maps 0->closed gap 0.4cm, 100->open gap 13cm).
     gripper_open: float = 70.0
     gripper_closed: float = 0.0
-    # Per-phase budget in control steps (at --fps). Generous; phases also advance
-    # early once the TCP is within `reach_tol` of its target.
+    # Per-phase budget in control steps (at --fps) for the held move phases
+    # (lift/carry/place); they also advance early once within `reach_tol`.
     phase_steps: int = 30
-    # TCP-to-target distance (m) that counts as "arrived" to advance a move phase.
+    # Settle budget (steps) for the grasp and release phases — long enough for the
+    # jaws to close/open, short enough that a moving cube doesn't slide out before
+    # the jaws clamp it.
+    grip_steps: int = 12
+    # Max steps the approach phase will hover waiting for a moving cube to enter
+    # reach before giving up (a passed/unreachable cube → the episode is a miss).
+    wait_steps: int = 240
+    # TCP-to-target distance (m) that counts as "arrived" for a held move phase.
     reach_tol: float = 0.012
+    # Horizontal TCP-to-cube distance (m) at which the hovering approach commits to
+    # descending (the gripper is over the cube).
+    align_tol: float = 0.02
+    # 3-D TCP-to-cube distance (m) at which the descent commits to grasping.
+    grasp_tol: float = 0.02
+    # Descend/grasp clamp the tracked cube y to ±this (m) so the arm never chases a
+    # cube past its workspace; it grasps within reach even at high belt speed.
+    reach_window_y: float = 0.12
+    # Small lead (s) added to the tracked cube xy so the servo, which lags a moving
+    # target, aims slightly ahead and closes the gap. ×belt_speed → metres of lead.
+    track_lead_s: float = 0.12
+    # Where on the belt (world y, m) the arm waits to grasp a moving cube — the
+    # home-pose "sweet spot" in front of the robot. Grasping here (rather than at
+    # the edge of reach the instant the cube enters) gives a consistent, strong
+    # top-down grip at every belt speed; a grip at full -y extension slips on lift,
+    # which is why low belt speeds used to fail. Ignored for a static cube.
+    grasp_y: float = 0.0
+    # Lead (s) before the cube reaches grasp_y at which the arm starts descending,
+    # so the jaws close around it near the sweet spot rather than behind it.
+    # ×belt_speed → metres. Closure tracks the live cube, so this only needs to be
+    # roughly the descend+close duration.
+    descend_lead_s: float = 0.45
 
 
 @dataclass
@@ -186,11 +215,13 @@ def solve_ik(sim: _Sim, target_pos: np.ndarray, q_seed: np.ndarray, cfg: IKConfi
 class PickPlaceExpert:
     """Privileged scripted state machine: approach → grasp → lift → place → release.
 
-    Produces one action dict per control step from the current sim state. For a
-    static cube (belt stopped) it targets the cube's current xy; for a moving belt
-    it targets a constant-velocity intercept point (the cube keeps travelling in
-    +y at belt speed). The grasp xy is latched at lift so the cube no longer being
-    read (once held) doesn't perturb the target.
+    Produces one action dict per control step from the current sim state. Pre-grasp
+    phases reactively track the cube's *live* xy (clamped to the reachable window
+    and led slightly forward), so the gripper hovers over a cube on the belt, waits
+    for it to enter reach, follows it down, and closes around it while it is still
+    moving — handling any belt speed, including one that varies between episodes,
+    without per-speed tuning. Once grasped, the cube is held, so carry/place use a
+    fixed carry height and the box's static pose.
     """
 
     PHASES = ("approach", "descend", "grasp", "lift", "carry", "place", "release", "done")
@@ -236,33 +267,38 @@ class PickPlaceExpert:
         jjt = j @ j.T + (self.ik.damping**2) * np.eye(3)
         return j.T @ np.linalg.solve(jjt, err)
 
-    def _intercept_xy(self) -> np.ndarray:
-        """Where to aim in xy: the cube's current xy, led forward by belt motion
-        over the time the arm still needs to reach the grasp. Constant-velocity
-        model — exact on a conveyor since belt speed is constant and axis-aligned
-        (+y). Static belt (speed 0) collapses to the cube's current xy."""
+    def _track_xy(self) -> np.ndarray:
+        """Pre-grasp aim point: the cube's *live* xy, led slightly forward to
+        offset the servo's lag on a moving target, with y clamped to the reachable
+        window so a cube still out at the feed end is hovered-for at the near edge
+        of reach rather than chased past the workspace. Reactive (uses the cube's
+        actual position every step) rather than a one-shot intercept, so it handles
+        any belt speed — including a speed that varies between episodes. Static belt
+        (speed 0) collapses to the cube's current xy."""
         cube = self.sim.cube_pos()
-        if self.belt_speed == 0.0:
-            return cube[:2]
-        # Lead time ≈ the remaining approach + descend duration before the jaws
-        # reach the cube. Two phase budgets is a conservative upper bound; refine
-        # once basic moving-belt grasps land.
-        lead_s = 2 * self.g.phase_steps / self.control_fps
-        return cube[:2] + np.array([0.0, self.belt_speed * lead_s])
+        lead_y = self.belt_speed * self.g.track_lead_s
+        y = np.clip(cube[1] + lead_y, -self.g.reach_window_y, self.g.reach_window_y)
+        return np.array([cube[0], y])
 
     def _target_for_phase(self) -> tuple[np.ndarray, float]:
-        """Return (tcp_target_xyz, gripper_cmd) for the current phase."""
+        """Return (tcp_target_xyz, gripper_cmd) for the current phase. Approach,
+        descend and grasp track the live cube (so the gripper moves with a cube on
+        the belt while the jaws close); held phases use a fixed carry height."""
         cube = self.sim.cube_pos()
         if self.phase == "approach":
-            xy = self._intercept_xy()
-            return np.array([xy[0], xy[1], cube[2] + self.g.approach_height]), self.g.gripper_open
+            # Static: hover directly over the (fixed) cube. Moving: hover at the
+            # fixed sweet spot and let the belt bring the cube to it.
+            xy = self._track_xy() if self.belt_speed == 0.0 else np.array([cube[0], self.g.grasp_y])
+            return np.array([xy[0], xy[1], self._rest_z + self.g.approach_height]), self.g.gripper_open
         if self.phase == "descend":
-            xy = self._intercept_xy()
-            return np.array([xy[0], xy[1], cube[2] + self.g.grasp_z_offset]), self.g.gripper_open
+            xy = self._track_xy()
+            return np.array([xy[0], xy[1], self._rest_z + self.g.grasp_z_offset]), self.g.gripper_open
         if self.phase == "grasp":
-            xy = self._intercept_xy()
+            # Keep tracking the (possibly still-moving) cube while the jaws close so
+            # the gripper closes *around* it instead of behind it.
+            xy = self._track_xy()
             self._grasp_xy = xy
-            return np.array([xy[0], xy[1], cube[2] + self.g.grasp_z_offset]), self.g.gripper_closed
+            return np.array([xy[0], xy[1], self._rest_z + self.g.grasp_z_offset]), self.g.gripper_closed
         carry_z = self._rest_z + self.g.approach_height
         if self.phase == "lift":
             xy = self._grasp_xy if self._grasp_xy is not None else cube[:2]
@@ -274,6 +310,32 @@ class PickPlaceExpert:
         if self.phase == "release":
             return np.array([self.box_xy[0], self.box_xy[1], self.g.place_height]), self.g.gripper_open
         return self.sim.tcp_pos(), self.g.gripper_open
+
+    def _should_advance(self, target_xyz: np.ndarray) -> bool:
+        """Per-phase transition test. Pre-grasp phases are event-triggered off the
+        live cube (so the arm waits for a moving cube and commits only when it is
+        actually over / within reach of it); held phases advance on arrival or a
+        time budget; grasp/release settle on a short budget."""
+        tcp = self.sim.tcp_pos()
+        cube = self.sim.cube_pos()
+        if self.phase == "approach":
+            if self.belt_speed == 0.0:
+                # Static: descend once the gripper is hovering over the cube.
+                horiz = float(np.linalg.norm(tcp[:2] - cube[:2]))
+                return horiz < self.g.align_tol or self._phase_step >= self.g.wait_steps
+            # Moving: start descending when the cube reaches the descend-start line
+            # `descend_lead_s` (in time) before the sweet spot, so closure — which
+            # tracks the live cube — lands near grasp_y. Also require the arm to be
+            # in place over the sweet spot first.
+            over_spot = float(np.linalg.norm(tcp[:2] - np.array([cube[0], self.g.grasp_y]))) < self.g.align_tol
+            cube_ready = cube[1] >= self.g.grasp_y - self.belt_speed * self.g.descend_lead_s
+            return (over_spot and cube_ready) or self._phase_step >= self.g.wait_steps
+        if self.phase == "descend":
+            return float(np.linalg.norm(tcp - cube)) < self.g.grasp_tol or self._phase_step >= self.g.phase_steps
+        if self.phase in ("grasp", "release"):
+            return self._phase_step >= self.g.grip_steps
+        # lift / carry / place: arrived at the (fixed) target, or budget spent.
+        return float(np.linalg.norm(tcp - target_xyz)) < self.g.reach_tol or self._phase_step >= self.g.phase_steps
 
     def _advance(self) -> None:
         idx = self.PHASES.index(self.phase)
@@ -302,12 +364,9 @@ class PickPlaceExpert:
         action = {f"{m}.pos": float(np.rad2deg(self.q_cmd[i])) for i, m in enumerate(BODY_MOTORS)}
         action[f"{GRIPPER}.pos"] = float(grip)
 
-        # Phase transition: advance when the TCP has arrived (move phases) or once
-        # the per-phase step budget is spent (settle phases: grasp/release).
+        # Phase transition (event-triggered off the live cube for pre-grasp).
         self._phase_step += 1
-        arrived = dist < self.g.reach_tol
-        move_phase = self.phase in ("approach", "descend", "lift", "carry", "place")
-        if (move_phase and arrived) or self._phase_step >= self.g.phase_steps:
+        if self._should_advance(target_xyz):
             self._advance()
         return action
 
@@ -357,9 +416,10 @@ def collect(
     mjcf_path: str,
     root: str | None = None,
     episodes: int = 20,
-    max_steps: int = 200,
+    max_steps: int = 320,
     fps: int = 30,
     belt_speed: float = 0.0,
+    belt_speed_max: float | None = None,
     belt_distance: float = 0.14,
     jitter_xy: float = 0.03,
     cameras: dict | None = None,
@@ -375,6 +435,12 @@ def collect(
     to drop them later, or filter on the returned success flags. The dataset
     schema is identical to `lerobot-record`, so `pixi run train` consumes it
     directly.
+
+    Belt speed: `belt_speed` is the fixed speed (0 = static cube). If
+    `belt_speed_max` is given (and exceeds `belt_speed`), each episode samples a
+    speed uniformly from `[belt_speed, belt_speed_max]`, so one dataset spans a
+    range of conveyor speeds — the reactive expert tracks the live cube and so
+    handles any speed without per-speed tuning.
     """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.robots.sim_so101 import SimCameraConfig, SimSO101, SimSO101Config
@@ -417,10 +483,17 @@ def collect(
         use_videos=True,
     )
 
+    vary_belt = belt_speed_max is not None and belt_speed_max > belt_speed
     results = []
+    speeds = []
     for ep in range(episodes):
+        # Per-episode belt speed. Updating robot.config.belt_speed is enough:
+        # _reset_episode re-applies it to the belt actuator's ctrl on reset.
+        ep_speed = float(rng.uniform(belt_speed, belt_speed_max)) if vary_belt else belt_speed
+        robot.config.belt_speed = ep_speed
+        speeds.append(ep_speed)
         _reset_episode(robot, sim, rng, jitter_xy)
-        expert = PickPlaceExpert(sim, box_xy, grasp, ik, belt_speed, control_fps=fps)
+        expert = PickPlaceExpert(sim, box_xy, grasp, ik, ep_speed, control_fps=fps)
         success = False
         frames = 0
         for _step in range(max_steps):
@@ -443,12 +516,13 @@ def collect(
         dataset.save_episode()
         results.append(success)
         tag = "placed" if success else "miss"
-        logger.info("episode %d/%d: %s (%d frames)", ep + 1, episodes, tag, frames)
-        print(f"  episode {ep + 1}/{episodes}: {tag} ({frames} frames)")
+        belt_note = f", belt {speeds[ep]:.3f} m/s" if vary_belt else ""
+        logger.info("episode %d/%d: %s (%d frames%s)", ep + 1, episodes, tag, frames, belt_note)
+        print(f"  episode {ep + 1}/{episodes}: {tag} ({frames} frames{belt_note})")
 
     robot.disconnect()
     rate = float(np.mean(results)) if results else 0.0
-    summary = {"episodes": episodes, "success": results, "success_rate": rate}
+    summary = {"episodes": episodes, "success": results, "success_rate": rate, "belt_speeds": speeds}
     print(f"done: {sum(results)}/{episodes} placed in box (success rate {rate:.0%})")
     if push:
         dataset.push_to_hub()
