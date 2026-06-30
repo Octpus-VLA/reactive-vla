@@ -24,16 +24,17 @@ pixi run eval --rtc --policy <ckpt> --task "Grab the cube" --repo-id rollout_rtc
 pixi run eval --rtc --execution-horizon 10 --queue-threshold 30 --max-rel 5 \
   --policy <ckpt> --task "Grab the cube" --repo-id rollout_rtc_test
 
-# detector を足すと replan タイミングが動的制御される（赤 cube の速度に追従）
-pixi run eval --rtc --detector red_cube_speed \
-  --policy <ckpt> --task "Grab the cube" --repo-id rollout_rtc_detector
+# overhead predictor を足すと、推論レイテンシ（PE gap）分だけ赤 cube を進めた
+# 画像を VLA に入力する（時間前進観測）
+pixi run eval --rtc --predict-cube --predictor-camera overall \
+  --policy <ckpt> --task "Grab the cube" --repo-id rollout_rtc_predict
 ```
 
 - `<ckpt>` は学習で出た `outputs/train/.../checkpoints/last`（`pretrained_model` は自動補完）または Hub の `user/name`。
 - `--rtc` を付けると内部で `--inference.type=rtc --inference.rtc.execution_horizon=… --inference.queue_threshold=… --policy.rtc_config.enabled=true --policy.rtc_config.execution_horizon=…` に展開される（horizon はポリシー側・エンジン側を自動で一致させる。理由は[オプション解説](#opts)の注記）。
 - `--repo-id` は `rollout_` で始める必要がある（lerobot の制約）。エピソード間に follower は自動で初期姿勢へ戻る（leader 不要）。
 - 自律実行では **`--max-rel`（1ステップの最大移動量 deg）を付けて急な動きを抑える**のを推奨。
-- `--detector`（`motion` / `red_cube_speed`）は **`--rtc` と併用が前提**。`--inference.supervisor.enabled=true --inference.supervisor.detector.type=… --inference.supervisor.camera=…` に展開される。監視カメラは `--detector-camera` で指定（既定は登録済みカメラの `overall`、無ければ先頭）。細かいしきい値は passthrough で渡す（例 `--inference.supervisor.detector.urgent_speed_px_s=300`）。detector の仕組みは [Supervisor トリガによる動的 replan](supervisor-trigger.md) を参照。
+- `--predict-cube` は **`--rtc` と併用が前提**。`--inference.predictor.enabled=true --inference.predictor.camera=…` に展開される。監視する overhead カメラは `--predictor-camera` で指定（既定は登録済みカメラの `overall`、無ければ先頭）。cube マスクの調整は passthrough で渡す（例 `--inference.predictor.cube.min_area_ratio=0.002`）。仕組みは [overhead カメラ予測器による動的 pick](overhead-predictor.md) を参照。
 
 下層の生コマンドや引数の意味は [実機 SO-101 で動かす（生コマンド）](#raw) と [オプション解説](#opts) を参照。
 
@@ -273,21 +274,19 @@ pixi run sim-eval --policy <ckpt> --repo-id rollout_sim_eval_test
 
 ---
 
-## 測定シナリオ（RTC / replan step / detector）
+## 測定シナリオ（RTC / replan step / overhead predictor）
 
-反応性の比較実験は、`pixi run eval --rtc` を起点に3パターンで回せる。定量データは専用の計測コードを足さず、まず既存ログ（RTC スレッドの `real_delay` / queue サイズ、detector の `reason` / `speed_px_s`）を使う。
+反応性の比較実験は、`pixi run eval --rtc` を起点に3パターンで回せる。定量データは専用の計測コードを足さず、まず既存ログ（RTC スレッドの `real_delay` / queue サイズ）を使う。
 
 | シナリオ | コマンド | 振るパラメータ | 観察ログ |
 |---|---|---|---|
 | ① RTC 単体 | `pixi run eval --rtc ...` | `--execution-horizon` | `RTC inference latency=…, queue=…`（debug）, `real_delay` |
 | ② replan step スイープ | `pixi run eval --rtc --queue-threshold {10,20,30,40} ...` | `--queue-threshold` | リプラン間隔 ≈ `chunk_size − queue_threshold`、queue 推移 |
-| ③ detector 動的 replan | `pixi run eval --rtc --detector red_cube_speed ...` | `--inference.supervisor.detector.{slow,fast,urgent}_speed_px_s` 等 | `RTC early replan (detector): reason=… speed_px_s=…` |
+| ③ overhead 時間前進 | `pixi run eval --rtc --predict-cube ...` | `--inference.predictor.cube.*` | `RTC overhead predictor enabled: camera=…` |
 
-- ③ では detector が `effective_chunk_size_threshold`（0–1）を返し、エンジンが `× chunk_size` で **動的な queue しきい値**に変換する。cube が速いほど早く（queue を多く残して）リプランし、`urgent_speed_px_s` 超で queue 残量に関係なく即時リプランする。
-- detector が無効（既定）なら ① のゲート（`qsize ≤ queue_threshold`）のみで動き、既存挙動と完全に同じ。
-- 同一指標で横並び比較したい場合、①②の `queue_threshold`（絶対ステップ）と③の `chunk_size_threshold`（割合）は `絶対 = 割合 × chunk_size` で換算する。
-
-> detector・supervisor の実装は async inference 経路と共有（`lerobot/detectors/`）。同じ detector を PolicyServer + RobotClient 構成でも使える。詳細は [Supervisor トリガによる動的 replan](supervisor-trigger.md)。
+- ③ では predictor が overhead で cube の位置・速度を推定し、推論レイテンシ `delay`（PE gap）分だけ `p + v·delay·dt` で前進させた画像を VLA に入力する。①②のゲート（`qsize ≤ queue_threshold`）はそのまま、観測だけが時間前進する。
+- predictor が無効（既定）なら ① と完全に同じ挙動。
+- **学習との整合**: 推論時に観測を前進させるなら、学習データも overhead を実フレーム `frame[t+Δt]` に差し替えて揃える必要がある（train-test mismatch 回避）。詳細は [overhead カメラ予測器による動的 pick](overhead-predictor.md)。
 
 ---
 

@@ -816,29 +816,26 @@ def evaluate(
         "--queue-threshold",
         help="RTC only: replan when the action queue drops to this many steps (replan interval ~= chunk_size - this).",
     ),
-    detector: str = typer.Option(
-        "none",
-        "--detector",
-        help="RTC only: add event-triggered / speed-adaptive replanning. Options: none, motion, red_cube_speed.",
-    ),
-    detector_camera: str = typer.Option(
-        None,
-        "--detector-camera",
-        help="Camera key the detector watches (defaults to a registered camera named 'overall', else the first). Must be a registered camera.",
-    ),
-    require_target_visible: bool = typer.Option(
+    predict_cube: bool = typer.Option(
         False,
-        "--require-target-visible/--no-require-target-visible",
-        help="RTC detector only: suppress queue-based planning until the detector sees the target.",
+        "--predict-cube/--no-predict-cube",
+        help="RTC only: enable the overhead cube predictor. The red cube is advanced forward by the "
+        "inference latency (PE gap) on --predictor-camera and the time-advanced frame is fed to the policy.",
+    ),
+    predictor_camera: str = typer.Option(
+        None,
+        "--predictor-camera",
+        help="Overhead camera key the cube predictor watches (defaults to a registered camera named "
+        "'overall', else the first). Must be a registered camera.",
     ),
 ) -> None:
     """Run a trained policy on the follower and record eval episodes (lerobot-rollout, episodic strategy).
 
     Between episodes the follower automatically returns to its startup position (no leader needed).
     Pass --rtc to drive the follower with async Real-Time Chunking inference instead of the sync engine.
-    Add --detector to let a camera detector control the RTC replan timing (red_cube_speed adapts it to
-    cube speed). Fine-tune the detector with passthrough flags, e.g.
-    --inference.supervisor.detector.urgent_speed_px_s=300.
+    Add --predict-cube to advance the red cube forward by the inference latency on the overhead camera
+    before feeding the frame to the policy. Fine-tune the cube mask with passthrough flags, e.g.
+    --inference.predictor.cube.min_area_ratio=0.002.
     """
     cfg = _load()
     foll = _require(cfg, "follower")  # the policy drives the follower; no leader needed
@@ -875,30 +872,24 @@ def evaluate(
         ]
     else:
         cmd.append("--inference.type=sync")
-    if detector != "none":
+    if predict_cube:
         if not rtc:
-            raise typer.BadParameter("--detector requires --rtc (the detector drives the RTC replan gate).")
-        if detector not in {"motion", "red_cube_speed"}:
-            raise typer.BadParameter(
-                f"--detector must be one of none, motion, red_cube_speed (got '{detector}')."
-            )
-        cam_key = detector_camera
+            raise typer.BadParameter("--predict-cube requires --rtc (the predictor feeds the RTC engine).")
+        cam_key = predictor_camera
         if cam_key is None:
             cam_keys = list((foll.get("cameras") or {}).keys())
             if not cam_keys:
                 raise typer.BadParameter(
-                    "--detector needs a camera but none are registered. "
-                    "Register one with `pixi run set-camera`, or pass --detector-camera."
+                    "--predict-cube needs a camera but none are registered. "
+                    "Register one with `pixi run set-camera`, or pass --predictor-camera."
                 )
             cam_key = "overall" if "overall" in cam_keys else cam_keys[0]
-        # Detector drives the RTC replan gate (see lerobot.detectors / docs/supervisor-trigger.md).
+        # Predictor advances the cube by the inference latency (see lerobot.predictors /
+        # docs/overhead-predictor.md).
         cmd += [
-            "--inference.supervisor.enabled=true",
-            f"--inference.supervisor.detector.type={detector}",
-            f"--inference.supervisor.camera={cam_key}",
+            "--inference.predictor.enabled=true",
+            f"--inference.predictor.camera={cam_key}",
         ]
-        if require_target_visible:
-            cmd.append("--inference.supervisor.require_target_visible=true")
     if episode_time is not None:
         cmd.append(f"--dataset.episode_time_s={episode_time}")
     if reset_time is not None:
