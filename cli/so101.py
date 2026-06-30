@@ -1088,9 +1088,13 @@ def sim_collect(
         help="Dataset id to create ('name' → prefixed with your HF user, or 'user/name'). "
         "Auto-generated as '<task-slug>/<timestamp>' if omitted.",
     ),
-    task: str = typer.Option("Grab the cube", "--task", help="Natural-language task stored with the dataset."),
+    task: str = typer.Option(
+        "Grab the cube", "--task", help="Natural-language task stored with the dataset."
+    ),
     mjcf_path: str = typer.Option(
-        "assets/so101/scene_cube.xml", "--mjcf-path", help="MuJoCo scene XML (needs the 'cube' and 'box' bodies)."
+        "assets/so101/scene_cube.xml",
+        "--mjcf-path",
+        help="MuJoCo scene XML (needs the 'cube' and 'box' bodies).",
     ),
     episodes: int = typer.Option(20, "--episodes", help="Number of demo episodes to record."),
     max_steps: int = typer.Option(
@@ -1099,7 +1103,9 @@ def sim_collect(
         help="Hard cap on control steps per episode. A slow belt needs more (the cube takes longer to "
         "travel into reach): ~320 covers down to ~0.03 m/s; raise it for slower belts.",
     ),
-    fps: int = typer.Option(30, "--fps", help="Control rate; also the dataset fps. Keep matched to training."),
+    fps: int = typer.Option(
+        30, "--fps", help="Control rate; also the dataset fps. Keep matched to training."
+    ),
     belt_speed: float = typer.Option(
         0.0,
         "--belt-speed",
@@ -1113,13 +1119,23 @@ def sim_collect(
         help="If set (and > --belt-speed), each episode draws a belt speed uniformly from "
         "[--belt-speed, --belt-speed-max], so one dataset spans a range of conveyor speeds.",
     ),
-    belt_distance: float = typer.Option(0.14, "--belt-distance", help="Metres from the robot base to the belt's near edge."),
-    jitter: float = typer.Option(
-        0.03, "--jitter", help="Uniform ±metres of xy randomisation on the cube start, so demos span grasp positions."
+    belt_distance: float = typer.Option(
+        0.14, "--belt-distance", help="Metres from the robot base to the belt's near edge."
     ),
-    seed: int = typer.Option(0, "--seed", help="RNG seed for cube-position randomisation (reproducible datasets)."),
-    push: bool = typer.Option(False, "--push/--no-push", help="Upload the recorded dataset to the Hugging Face Hub."),
-    overwrite: bool = typer.Option(False, "--overwrite", help="Delete an existing local dataset with this id first."),
+    jitter: float = typer.Option(
+        0.03,
+        "--jitter",
+        help="Uniform ±metres of xy randomisation on the cube start, so demos span grasp positions.",
+    ),
+    seed: int = typer.Option(
+        0, "--seed", help="RNG seed for cube-position randomisation (reproducible datasets)."
+    ),
+    push: bool = typer.Option(
+        False, "--push/--no-push", help="Upload the recorded dataset to the Hugging Face Hub."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Delete an existing local dataset with this id first."
+    ),
 ) -> None:
     """Record scripted-expert pick-and-place demos in the MuJoCo sim (no hardware).
 

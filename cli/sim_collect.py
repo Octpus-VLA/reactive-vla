@@ -327,15 +327,22 @@ class PickPlaceExpert:
             # `descend_lead_s` (in time) before the sweet spot, so closure — which
             # tracks the live cube — lands near grasp_y. Also require the arm to be
             # in place over the sweet spot first.
-            over_spot = float(np.linalg.norm(tcp[:2] - np.array([cube[0], self.g.grasp_y]))) < self.g.align_tol
+            over_spot = (
+                float(np.linalg.norm(tcp[:2] - np.array([cube[0], self.g.grasp_y]))) < self.g.align_tol
+            )
             cube_ready = cube[1] >= self.g.grasp_y - self.belt_speed * self.g.descend_lead_s
             return (over_spot and cube_ready) or self._phase_step >= self.g.wait_steps
         if self.phase == "descend":
-            return float(np.linalg.norm(tcp - cube)) < self.g.grasp_tol or self._phase_step >= self.g.phase_steps
+            return (
+                float(np.linalg.norm(tcp - cube)) < self.g.grasp_tol or self._phase_step >= self.g.phase_steps
+            )
         if self.phase in ("grasp", "release"):
             return self._phase_step >= self.g.grip_steps
         # lift / carry / place: arrived at the (fixed) target, or budget spent.
-        return float(np.linalg.norm(tcp - target_xyz)) < self.g.reach_tol or self._phase_step >= self.g.phase_steps
+        return (
+            float(np.linalg.norm(tcp - target_xyz)) < self.g.reach_tol
+            or self._phase_step >= self.g.phase_steps
+        )
 
     def _advance(self) -> None:
         idx = self.PHASES.index(self.phase)
