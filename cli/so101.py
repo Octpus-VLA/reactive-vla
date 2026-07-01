@@ -941,6 +941,14 @@ def sim_eval(
         "the arm's ~0.40m reach; the start pose is tuned for the default, so large changes may "
         "not frame the cube in the wrist camera.",
     ),
+    end_on_drop: bool = typer.Option(
+        True,
+        "--end-on-drop/--no-end-on-drop",
+        help="End each episode as soon as the cube leaves the belt (settles below belt height: fell "
+        "off the far end, or was placed into the box). For the conveyor task the episode only "
+        "matters while the cube is on the belt, so this bounds the rollout by that instead of a "
+        "fixed horizon (--episode-steps / --episode-time still cap it as a backstop). Default on.",
+    ),
     success_body: str = typer.Option(
         "cube", "--success-body", help="MJCF body to track for success (must have a freejoint)."
     ),
@@ -1057,6 +1065,7 @@ def sim_eval(
         f"--robot.control_fps={fps}",
         f"--robot.belt_speed={belt_speed}",
         f"--robot.belt_distance={belt_distance}",
+        f"--robot.end_on_drop={'true' if end_on_drop else 'false'}",
         f"--robot.success.body_name={success_body}",
         f"--robot.success.criterion={success_criterion}",
         f"--robot.success.height_m={success_height}",
