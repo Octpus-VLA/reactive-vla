@@ -1,6 +1,5 @@
 {
     "recommendations": [
-        "charliermarsh.ruff",
-        "GitHub.vscode-pull-request-github"
+        "charliermarsh.ruff"
     ]
 }
