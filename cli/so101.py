@@ -971,10 +971,11 @@ def sim_eval(
         help="'lift' only: meters the body must rise above its resting height to count as lifted.",
     ),
     policy_camera: str = typer.Option(
-        "wrist_cam",
+        "box_top",
         "--policy-camera",
-        help="MuJoCo camera fed to the policy as observation.images.camera1. Default wrist_cam (the "
-        "real rig's eye-in-hand view). Set to the camera the policy was TRAINED on, e.g. box_top.",
+        help="MuJoCo camera fed to the policy as observation.images.camera1 — must match the camera "
+        "the policy was TRAINED on. Defaults to box_top (the current single-camera setup); override "
+        "for a policy trained on a different view, e.g. --policy-camera wrist_cam.",
     ),
     record_cameras: str = typer.Option(
         "",
