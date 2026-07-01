@@ -43,7 +43,11 @@ push-policy = "python cli/so101.py push-policy"  # usage: pixi run push-policy -
 eval = "python cli/so101.py eval"                # usage: pixi run eval --policy <ckpt> --task "..." --repo-id eval_name
 policy-test = "python cli/so101.py policy-test"  # offline inference smoke test (no robot needed)
 sim-eval = "python cli/so101.py sim-eval"        # usage: pixi run sim-eval --policy <ckpt> --episodes 10 (MuJoCo sim, success rate / success step; add --repo-id rollout_<name> to also record video)
-sim-collect = "python cli/so101.py sim-collect"  # usage: pixi run sim-collect --episodes 20 --repo-id sim_pickplace (scripted IK expert records MuJoCo pick-place demos for fine-tuning)
+# scripted IK expert records MuJoCo pick-place demos for fine-tuning.
+# MUJOCO_GL=egl here: collection runs no policy, so GPU rendering is safe + fast
+# (sim-eval forces osmesa instead because it contends with CUDA policy inference).
+# usage: pixi run sim-collect --episodes 20 --repo-id sim_pickplace
+sim-collect = { cmd = "python cli/so101.py sim-collect", env = { MUJOCO_GL = "egl" } }
 
 # Low-level fallback if you prefer raw lerobot port detection:
 find-port = "lerobot-find-port"

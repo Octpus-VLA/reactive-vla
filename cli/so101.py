@@ -27,6 +27,10 @@ from enum import StrEnum
 from pathlib import Path
 
 import serial.tools.list_ports
+
+# Same directory (cli/), which is sys.path[0] when this file is run as a script
+# (`python cli/so101.py ...`), so no path munging is needed.
+import sim_collect
 import typer
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
@@ -1071,8 +1075,10 @@ def sim_eval(
     _run(cmd + list(ctx.args))
 
 
+# Function name is distinct from the imported `sim_collect` module (the CLI name
+# stays "sim-collect" via the decorator) so the module reference below doesn't clash.
 @app.command("sim-collect")
-def sim_collect(
+def sim_collect_cmd(
     repo_id: str = typer.Option(
         None,
         "--repo-id",
@@ -1139,16 +1145,9 @@ def sim_collect(
     privileged cube reads never enter the dataset (only wrist cam + joint state +
     commanded targets). Design notes: docs/sim-scripted-collect.md.
     """
-    # Headless GPU rendering: unlike sim-eval (which interleaves CUDA policy
-    # inference and contends for the GPU, so it forces osmesa), collection runs no
-    # policy, so egl is both safe and much faster per render. Respect an override.
-    os.environ.setdefault("MUJOCO_GL", "egl")
-
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import sim_collect
-
+    # MUJOCO_GL=egl is set on the `sim-collect` pixi task (see pixi.toml): unlike
+    # sim-eval (which interleaves CUDA policy inference and contends for the GPU, so
+    # it forces osmesa), collection runs no policy, so egl is safe and much faster.
     if not repo_id:
         repo_id = _auto_repo_id(task)
         typer.secho(f"(--repo-id omitted — using auto-generated '{repo_id}')", fg="yellow")
