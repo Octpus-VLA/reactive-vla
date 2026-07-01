@@ -977,11 +977,20 @@ def sim_eval(
         "real rig's eye-in-hand view). Set to the camera the policy was TRAINED on, e.g. box_top.",
     ),
     record_cameras: str = typer.Option(
-        "overview",
+        "",
         "--record-cameras",
-        help="Comma-separated extra MuJoCo cameras to ALSO render into the --repo-id dataset (not fed "
-        "to the policy), e.g. overview,belt_top,box_top,front_high,corner. The --policy-camera is "
-        "always recorded too (as camera1); duplicates are dropped. Only matters with --repo-id.",
+        help="Comma-separated EXTRA MuJoCo cameras to ALSO render into the --repo-id dataset (not fed "
+        "to the policy), e.g. overview,belt_top,front_high,corner. Empty by default: only the "
+        "--policy-camera is rendered (as camera1) — every extra camera is another CPU (osmesa) "
+        "render per control step, so keep this minimal for speed. Duplicates of the policy camera "
+        "are dropped. Only matters with --repo-id.",
+    ),
+    stream_video: bool = typer.Option(
+        True,
+        "--stream-video/--no-stream-video",
+        help="Encode the --repo-id videos in real time during the rollout (streaming_encoding) "
+        "instead of writing per-frame PNGs first and batch-encoding at episode end. Skips the "
+        "intermediate images/ dir. Default on.",
     ),
     fps: int = typer.Option(30, "--fps"),
     output: str = typer.Option(
@@ -1051,6 +1060,7 @@ def sim_eval(
             f"--dataset.repo_id={repo}",
             f"--dataset.fps={fps}",
             f"--dataset.push_to_hub={'true' if push else 'false'}",
+            f"--dataset.streaming_encoding={'true' if stream_video else 'false'}",
         ]
         typer.secho(f"(recording episodes to {repo})", fg="yellow")
 
