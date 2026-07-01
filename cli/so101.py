@@ -987,11 +987,13 @@ def sim_eval(
         "are dropped. Only matters with --repo-id.",
     ),
     stream_video: bool = typer.Option(
-        True,
+        False,
         "--stream-video/--no-stream-video",
         help="Encode the --repo-id videos in real time during the rollout (streaming_encoding) "
-        "instead of writing per-frame PNGs first and batch-encoding at episode end. Skips the "
-        "intermediate images/ dir. Default on.",
+        "instead of writing per-frame PNGs first and batch-encoding at episode end (skips the "
+        "intermediate images/ dir). Default OFF: lerobot's streaming path doesn't emit per-episode "
+        "image stats, so a multi-episode dataset crashes at finalize (metadata buffer length "
+        "mismatch). Safe for single-episode runs; leave off for multi-episode.",
     ),
     fps: int = typer.Option(30, "--fps"),
     output: str = typer.Option(
