@@ -455,8 +455,16 @@ def collect(
     from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 
     cam_specs = cameras or {
+        # Policy input: the real SO-101's only camera (wrist-mounted eye-in-hand).
         "camera1": SimCameraConfig(mujoco_name="wrist_cam", width=320, height=240),
+        # Recording-only privileged external views (defined in scene_cube.xml). Not
+        # for a wrist-cam-only transfer policy — kept in the dataset for a future
+        # cube-position/velocity predictor, place verification, and visualisation.
         "overview": SimCameraConfig(mujoco_name="overview", width=320, height=240),
+        "belt_top": SimCameraConfig(mujoco_name="belt_top", width=320, height=240),
+        "box_top": SimCameraConfig(mujoco_name="box_top", width=320, height=240),
+        "front_high": SimCameraConfig(mujoco_name="front_high", width=320, height=240),
+        "corner": SimCameraConfig(mujoco_name="corner", width=320, height=240),
     }
     config = SimSO101Config(
         mjcf_path=str(mjcf_path),

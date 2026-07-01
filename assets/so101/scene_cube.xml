@@ -76,6 +76,17 @@
             rgba="0.9 0.2 0.2 1" mass="0.02"
             friction="1.0 0.05 0.001"/>
     </body>
+
+    <!-- Candidate recording-only camera angles (privileged external views, like
+         `overview`). NOT for a wrist-cam-only transfer policy; useful for a
+         cube-position/velocity predictor, place verification, and analysis.
+         `mode="targetbody"` auto-aims each camera at the named body, so they keep
+         framing the scene even when belt_distance shifts the belt/box. Wire any of
+         these into sim-collect via its `cameras` map (key -> mujoco_name). -->
+    <camera name="belt_top" pos="0.19 0 0.55" mode="targetbody" target="belt"/>
+    <camera name="box_top" pos="0.50 0 0.42" mode="targetbody" target="base"/>
+    <camera name="front_high" pos="0.62 0 0.32" mode="targetbody" target="belt"/>
+    <camera name="corner" pos="0.52 0.45 0.42" mode="targetbody" target="belt"/>
   </worldbody>
 
   <actuator>
