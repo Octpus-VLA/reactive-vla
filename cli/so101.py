@@ -917,14 +917,21 @@ def sim_eval(
         help="MuJoCo scene XML. Must include the success-check body (default scene has 'cube').",
     ),
     episodes: int = typer.Option(10, "--episodes", help="Number of episodes to run."),
-    episode_time: float = typer.Option(30, "--episode-time", help="Max wall-clock seconds per episode."),
+    episode_time: float = typer.Option(
+        100000,
+        "--episode-time",
+        help="Wall-clock seconds cap per episode — a safety backstop, not the primary bound. It "
+        "defaults high so it does NOT prematurely cut an episode: since it's wall-clock (not sim "
+        "time), slow render/inference otherwise ends the episode in a fraction of a sim-second. "
+        "Episodes normally end on --end-on-drop (cube leaves the belt) or --episode-steps.",
+    ),
     episode_steps: int = typer.Option(
-        None,
+        1000,
         "--episode-steps",
-        help="Max control steps per episode, in addition to --episode-time (whichever hits first "
-        "ends the episode). --episode-time alone is wall-clock, not sim time, so the actual step "
-        "count it produces varies with render/inference speed — set this for a reproducible step "
-        "count (e.g. 600 for ~20s of sim time at --fps 30).",
+        help="Max control steps (sim-time bound, reproducible) per episode — the backstop that "
+        "caps the rollout if the cube never leaves the belt (e.g. static belt, idle policy). On a "
+        "moving belt --end-on-drop usually ends it much sooner (the cube falls off the far end). "
+        "1000 ≈ 33s of sim time at --fps 30. Set 0/None to disable.",
     ),
     reset_time: float = typer.Option(3, "--reset-time", help="Seconds held between episodes."),
     belt_speed: float = typer.Option(
@@ -1086,7 +1093,7 @@ def sim_eval(
     if extra_cams:
         rename_entries = ", ".join(f'"observation.images.{c}": "observation.images.{c}"' for c in extra_cams)
         cmd.append("--rename_map={" + rename_entries + "}")
-    if episode_steps is not None:
+    if episode_steps:  # 0/None disables the step cap
         cmd.append(f"--strategy.episode_steps={episode_steps}")
     if rtc:
         cmd += [
