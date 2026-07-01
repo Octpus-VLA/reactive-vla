@@ -955,6 +955,19 @@ def sim_eval(
         "--success-height",
         help="'lift' only: meters the body must rise above its resting height to count as lifted.",
     ),
+    policy_camera: str = typer.Option(
+        "wrist_cam",
+        "--policy-camera",
+        help="MuJoCo camera fed to the policy as observation.images.camera1. Default wrist_cam (the "
+        "real rig's eye-in-hand view). Set to the camera the policy was TRAINED on, e.g. box_top.",
+    ),
+    record_cameras: str = typer.Option(
+        "overview",
+        "--record-cameras",
+        help="Comma-separated extra MuJoCo cameras to ALSO render into the --repo-id dataset (not fed "
+        "to the policy), e.g. overview,belt_top,box_top,front_high,corner. The --policy-camera is "
+        "always recorded too (as camera1); duplicates are dropped. Only matters with --repo-id.",
+    ),
     fps: int = typer.Option(30, "--fps"),
     output: str = typer.Option(
         None,
@@ -1026,23 +1039,21 @@ def sim_eval(
         ]
         typer.secho(f"(recording episodes to {repo})", fg="yellow")
 
+    # camera1 = --policy-camera: the view fed to the policy, which must match what
+    # it was trained on (default wrist_cam = the real rig's eye-in-hand view; use
+    # box_top etc. for a policy trained on that). Any --record-cameras are extra
+    # fixed views rendered into the dataset only (not consumed by the policy). The
+    # rollout context rejects a robot camera the policy doesn't expect unless it's
+    # in --rename_map (a no-op identity entry there takes the skip-check branch).
+    extra_cams = [c.strip() for c in record_cameras.split(",") if c.strip() and c.strip() != policy_camera]
+    cam_entries = [f"camera1: {{mujoco_name: {policy_camera}, width: 320, height: 240}}"]
+    cam_entries += [f"{c}: {{mujoco_name: {c}, width: 320, height: 240}}" for c in extra_cams]
     cmd = [
         "lerobot-rollout",
         f"--policy.path={_resolve_policy(policy)}",
         "--robot.type=sim_so101",
         f"--robot.mjcf_path={Path(mjcf_path).resolve()}",
-        # camera1=wrist_cam: the real SO-101 rig's only camera is wrist-mounted
-        # (eye-in-hand); wrist_cam is the Menagerie so101.xml's built-in camera
-        # at that same CAD-derived mount, so that's the policy's only input
-        # camera too. overview: fixed external view (added in scene_cameras.xml,
-        # not part of upstream so101.xml), not consumed by this policy but
-        # recorded into the dataset (with --repo-id) for a future cube-position/
-        # velocity predictor. The rollout context rejects any robot camera the
-        # policy doesn't expect unless --rename_map is set (it skips that check
-        # entirely) — the no-op entry below exists only to take that branch.
-        "--robot.cameras={camera1: {mujoco_name: wrist_cam, width: 320, height: 240}, "
-        "overview: {mujoco_name: overview, width: 320, height: 240}}",
-        '--rename_map={"observation.images.overview": "observation.images.overview"}',
+        "--robot.cameras={" + ", ".join(cam_entries) + "}",
         f"--robot.control_fps={fps}",
         f"--robot.belt_speed={belt_speed}",
         f"--robot.belt_distance={belt_distance}",
@@ -1059,6 +1070,13 @@ def sim_eval(
         "--play_sounds=false",
         *dataset_args,
     ]
+    # Only pass --rename_map when there are extra (non-policy) cameras to declare;
+    # a no-op identity entry per extra camera takes the rollout's skip-check branch
+    # so those recording-only views aren't rejected. With no extras the policy sees
+    # exactly camera1, so the default camera check passes and no rename_map is needed.
+    if extra_cams:
+        rename_entries = ", ".join(f'"observation.images.{c}": "observation.images.{c}"' for c in extra_cams)
+        cmd.append("--rename_map={" + rename_entries + "}")
     if episode_steps is not None:
         cmd.append(f"--strategy.episode_steps={episode_steps}")
     if rtc:
