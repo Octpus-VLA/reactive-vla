@@ -13,6 +13,7 @@ first octpus vla project repository
 - **HPC batch training** — submit fine-tuning as a PBS job instead of running `pixi run train` interactively. The PBS scripts themselves aren't included in this repo (they bake in site-specific queue/`group_list` settings) — see the template in [Fine-tuning](#fine-tuning) and drop your own under `jobs/` (gitignored).
 - **MuJoCo simulation** — a bundled SO-ARM100 model + `sim_so101` robot adapter let you exercise the async RTC rollout path without physical hardware. See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md).
 - **Sim success-rate evaluation** (`pixi run sim-eval`) — run a trained policy in the MuJoCo sim and score task success rate / success step (a Lift-style criterion: did the cube get picked up). Add `--repo-id rollout_<name>` to also record video/dataset. See [Inference](#inference) below.
+- **Sim demo collection** (`pixi run sim-collect`) — a scripted IK expert (driven by privileged sim state) performs pick-and-place in the MuJoCo sim and writes the (observation, action) pairs to a `LeRobotDataset` in the same schema `record` produces. A policy trained on real-hardware images is out of distribution on the sim's rendered observations (the real→sim visual gap); fine-tuning on this sim-rendered data is how you close it. See [docs/sim-scripted-collect.md](docs/sim-scripted-collect.md).
 
 ### SO-101 commands (`pixi run <command>`)
 
@@ -35,6 +36,7 @@ first octpus vla project repository
 | `policy-test --policy ... --repo-id ...` | Offline inference smoke test (no robot needed) |
 | `eval --policy ... --task "..." --repo-id rollout_name` | Run a trained policy on the follower and record eval episodes |
 | `sim-eval --policy ... [--repo-id rollout_name]` | Run a trained policy in the MuJoCo sim and score success rate / success step |
+| `sim-collect --episodes N --repo-id name` | Collect MuJoCo pick-and-place demos with a scripted IK expert (for fine-tuning) |
 | `hf-login` / `wandb-login` | One-time login helpers (needed before pushing/logging) |
 
 Run `pixi run <command> --help` for the full flag list. Flags placed after a forwarding command (`teleop`, `record`, `train`, `eval`, `sim-eval`, `replay`) are passed straight through to the underlying `lerobot-*` CLI.
@@ -266,7 +268,9 @@ No recording happens unless `--repo-id` is given — by default `sim-eval` only 
 - **stationary (`--belt-speed 0`, the default)** — the cube is parked directly **in front of the robot** (`y=0`), graspable on the spot, for static pick evaluation.
 - **running (`--belt-speed > 0`)** — the cube is fed from the belt's `-y` end and carried through the reachable region (the arm's home pose faces the front-center where it crosses); the belt spans `y∈[-0.30, 0.30]`, so an un-picked cube falls off the `+y` end like a real conveyor.
 
-**`--belt-distance M`** (default `0.14` = 14 cm from the robot base to the belt's near edge) slides the whole belt + box + cube layout forward/back together; keep the cube within the arm's ~0.40 m reach. The white box is where picked cubes are meant to go, but **box-placement success detection isn't implemented yet** (success is still the lift criterion above).
+**`--belt-distance M`** (default `0.14` = 14 cm from the robot base to the belt's near edge) slides the whole belt + box + cube layout forward/back together; keep the cube within the arm's ~0.40 m reach.
+
+**`--success-criterion`** picks how an episode is scored: `lift` (default, the Lift criterion above) or **`place_in_box`** — success once the cube comes to rest *inside* the white box (within its footprint, below the rim, and settled), i.e. a full pick-and-place. Pair it with `--belt-speed` for the dynamic task.
 
 `sim-eval` sets `MUJOCO_GL=osmesa` (CPU rendering) by default, not `egl` (GPU). Measured on a GH200 node: rendering and CUDA policy inference contending for the same GPU under `egl` stalled individual render calls by ~19s, while plain CPU rendering (~80ms/frame) has no such contention and was ~80x faster end to end. Override with `export MUJOCO_GL=egl` if you have a setup where that doesn't apply (e.g. rendering and inference on separate GPUs). See [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) for more on the sim setup, and note this is still an early integration: the bundled cube placement / camera framing are provisional, and a policy trained on real hardware images shouldn't be expected to succeed zero-shot in the sim's rendered observations.
 

@@ -27,6 +27,10 @@ from enum import StrEnum
 from pathlib import Path
 
 import serial.tools.list_ports
+
+# Same directory (cli/), which is sys.path[0] when this file is run as a script
+# (`python cli/so101.py ...`), so no path munging is needed.
+import sim_collect
 import typer
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
@@ -940,10 +944,16 @@ def sim_eval(
     success_body: str = typer.Option(
         "cube", "--success-body", help="MJCF body to track for success (must have a freejoint)."
     ),
+    success_criterion: str = typer.Option(
+        "lift",
+        "--success-criterion",
+        help="How an episode counts as a success: 'lift' (body raised --success-height above "
+        "rest) or 'place_in_box' (body settled inside the box). Default 'lift'.",
+    ),
     success_height: float = typer.Option(
         0.05,
         "--success-height",
-        help="Meters the body must rise above its resting height to count as lifted.",
+        help="'lift' only: meters the body must rise above its resting height to count as lifted.",
     ),
     fps: int = typer.Option(30, "--fps"),
     output: str = typer.Option(
@@ -970,12 +980,14 @@ def sim_eval(
 ) -> None:
     """Run a trained policy in the MuJoCo sim and score task success rate / success step.
 
-    Success is "the tracked body was lifted `--success-height` above where it
-    rested" (a robosuite/LIBERO-style Lift criterion) — read directly from
-    privileged sim state, never shown to the policy. Requires the scene to
-    have a freejoint body named `--success-body` (the bundled `scene_cube.xml`
-    has one named "cube"). See docs/rtc-sim-rollout.md for background on the
-    sim setup.
+    Success is read directly from privileged sim state (never shown to the
+    policy), via `--success-criterion`:
+    - `lift` (default): the tracked body rose `--success-height` above where it
+      rested (a robosuite/LIBERO-style Lift criterion).
+    - `place_in_box`: the tracked body came to rest inside the scene's `box`
+      body (pick-and-place). Pair with `--belt-speed` for the dynamic task.
+    Requires a freejoint body named `--success-body` (the bundled
+    `scene_cube.xml` has one named "cube"). See docs/rtc-sim-rollout.md.
 
     No recording happens unless `--repo-id` is given — by default this only
     measures success rate / success step, exactly like the rest of `eval`'s
@@ -1035,6 +1047,7 @@ def sim_eval(
         f"--robot.belt_speed={belt_speed}",
         f"--robot.belt_distance={belt_distance}",
         f"--robot.success.body_name={success_body}",
+        f"--robot.success.criterion={success_criterion}",
         f"--robot.success.height_m={success_height}",
         "--strategy.type=eval",
         f"--strategy.num_episodes={episodes}",
@@ -1060,6 +1073,116 @@ def sim_eval(
         cmd.append("--inference.type=sync")
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
     _run(cmd + list(ctx.args))
+
+
+# Function name is distinct from the imported `sim_collect` module (the CLI name
+# stays "sim-collect" via the decorator) so the module reference below doesn't clash.
+@app.command("sim-collect")
+def sim_collect_cmd(
+    repo_id: str = typer.Option(
+        None,
+        "--repo-id",
+        help="Dataset id to create ('name' → prefixed with your HF user, or 'user/name'). "
+        "Auto-generated as '<task-slug>/<timestamp>' if omitted.",
+    ),
+    task: str = typer.Option(
+        "Grab the cube", "--task", help="Natural-language task stored with the dataset."
+    ),
+    mjcf_path: str = typer.Option(
+        "assets/so101/scene_cube.xml",
+        "--mjcf-path",
+        help="MuJoCo scene XML (needs the 'cube' and 'box' bodies).",
+    ),
+    episodes: int = typer.Option(20, "--episodes", help="Number of demo episodes to record."),
+    max_steps: int = typer.Option(
+        320,
+        "--max-steps",
+        help="Hard cap on control steps per episode. A slow belt needs more (the cube takes longer to "
+        "travel into reach): ~320 covers down to ~0.03 m/s; raise it for slower belts.",
+    ),
+    fps: int = typer.Option(
+        30, "--fps", help="Control rate; also the dataset fps. Keep matched to training."
+    ),
+    belt_speed: float = typer.Option(
+        0.0,
+        "--belt-speed",
+        help="Conveyor speed (m/s). 0 = static cube parked in front of the robot; non-zero feeds the "
+        "cube from the -y end and the reactive expert tracks it. With --belt-speed-max this is the "
+        "low end of a per-episode random range.",
+    ),
+    belt_speed_max: float = typer.Option(
+        None,
+        "--belt-speed-max",
+        help="If set (and > --belt-speed), each episode draws a belt speed uniformly from "
+        "[--belt-speed, --belt-speed-max], so one dataset spans a range of conveyor speeds.",
+    ),
+    belt_distance: float = typer.Option(
+        0.14, "--belt-distance", help="Metres from the robot base to the belt's near edge."
+    ),
+    jitter: float = typer.Option(
+        0.03,
+        "--jitter",
+        help="Uniform ±metres of xy randomisation on the cube start, so demos span grasp positions.",
+    ),
+    seed: int = typer.Option(
+        0, "--seed", help="RNG seed for cube-position randomisation (reproducible datasets)."
+    ),
+    push: bool = typer.Option(
+        False, "--push/--no-push", help="Upload the recorded dataset to the Hugging Face Hub."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Delete an existing local dataset with this id first."
+    ),
+) -> None:
+    """Record scripted-expert pick-and-place demos in the MuJoCo sim (no hardware).
+
+    A privileged IK controller (reads the cube's true pose, solves IK, servos the
+    arm) drives the SimSO101 robot through approach → grasp → carry → place, and
+    every (observation, action) pair is written to a LeRobotDataset with the same
+    schema `record` produces — so `pixi run train` consumes it directly. The point
+    is sim-*rendered* observations: fine-tuning a real-data SmolVLA on these closes
+    the real→sim visual gap that leaves it motionless in `sim-eval`. The expert's
+    privileged cube reads never enter the dataset (only wrist cam + joint state +
+    commanded targets). Design notes: docs/sim-scripted-collect.md.
+    """
+    # MUJOCO_GL=egl is set on the `sim-collect` pixi task (see pixi.toml): unlike
+    # sim-eval (which interleaves CUDA policy inference and contends for the GPU, so
+    # it forces osmesa), collection runs no policy, so egl is safe and much faster.
+    if not repo_id:
+        repo_id = _auto_repo_id(task)
+        typer.secho(f"(--repo-id omitted — using auto-generated '{repo_id}')", fg="yellow")
+    repo = _resolve_repo(repo_id, for_creation=True)
+    # Pushing needs a real Hub namespace; a local-only id can't be uploaded. Fail
+    # early (before a long collection run) rather than at the push at the end.
+    if push and repo.startswith("local/"):
+        raise typer.BadParameter(
+            "--push needs a Hugging Face account: run `pixi run hf-login` first, or pass "
+            "--repo-id <hf-user>/<name>. (Not logged in, so the id resolved to "
+            f"'{repo}', which can't be pushed.)"
+        )
+    _maybe_overwrite(repo, overwrite)
+    if belt_speed_max is not None and belt_speed_max > belt_speed:
+        typer.secho(f"(belt speed varies per episode in [{belt_speed}, {belt_speed_max}] m/s)", fg="yellow")
+    typer.secho(f"(recording {episodes} scripted episodes to {repo})", fg="yellow")
+    summary = sim_collect.collect(
+        repo_id=repo,
+        task=task,
+        mjcf_path=str(Path(mjcf_path).resolve()),
+        episodes=episodes,
+        max_steps=max_steps,
+        fps=fps,
+        belt_speed=belt_speed,
+        belt_speed_max=belt_speed_max,
+        belt_distance=belt_distance,
+        jitter_xy=jitter,
+        seed=seed,
+        push=push,
+    )
+    typer.secho(
+        f"recorded {summary['episodes']} episodes, "
+        f"{sum(summary['success'])} placed in box ({summary['success_rate']:.0%})",
+        fg="green",
+    )
 
 
 @app.command(context_settings=PASSTHROUGH)

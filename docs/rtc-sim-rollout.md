@@ -81,6 +81,8 @@ export MUJOCO_GL=egl         # ヘッドレスGPU描画。ダメなら osmesa（
 
 **RTC は推論時のテクニックなので、学習側に RTC 用の処理は一切不要**（普通の SmolVLA ファインチューニングでよい）。RTC の有無はロールアウト時に切り替える。
 
+> 実機データで学習したチェックポイントは sim レンダリング観測に対して分布外で、`sim-eval` ではほぼ動かない（real→sim 視覚ギャップ）。これを埋める sim 観測の学習データは、スクリプト IK エキスパートで自動収集できる → [sim スクリプトエキスパート収集](sim-scripted-collect.md)（`pixi run sim-collect`）。
+
 GPU ノードでの学習は PBS ジョブ [`jobs/train_smolvla.pbs`](https://github.com/Octpus-VLA/reactive-vla/blob/main/jobs/train_smolvla.pbs) を使う（リポジトリ root から投入）：
 
 ```bash
@@ -221,7 +223,9 @@ pixi run sim-eval --policy <ckpt> --belt-distance 0.18
 pixi run sim-eval --policy <ckpt> --repo-id rollout_sim_eval_test
 ```
 
-- **成功判定（Lift 基準）**: `scene_cube.xml` の `cube` body（free joint）の z 位置が、接続時の静止高さから `--success-height`（既定 0.05m）以上持ち上がったら成功。robosuite/LIBERO の "Lift" タスクと同じ考え方で、把持して持ち上げない限り発生しない（接触だけでは上がらない）。
+- **成功判定は `--success-criterion` で選択**:
+  - `lift`（既定・**Lift 基準**）: `scene_cube.xml` の `cube` body（free joint）の z 位置が、接続時の静止高さから `--success-height`（既定 0.05m）以上持ち上がったら成功。robosuite/LIBERO の "Lift" タスクと同じ考え方で、把持して持ち上げない限り発生しない（接触だけでは上がらない）。
+  - `place_in_box`: cube が白い箱の空洞内に静止したら成功（ピック&プレース全体）。詳細は下の「ベルト + 箱」の項を参照。
 - 判定はポリシーの入出力には一切影響しない。`SimSO101.check_success()` が MuJoCo の `mj_data.qpos` を直接読むだけで、`get_observation()` には乗らない（privileged な評価専用の読み取り）。
 - 出力は `outputs/eval/<policy-slug>/<タイムスタンプ>/summary.json`（`--output` で変更可）に、エピソードごとの `success` / `success_step` / `num_steps` と、全体の `success_rate` / `mean_success_step` が書かれる。
 - **録画は `--repo-id` を渡したときだけ**。省略すると `episodic` 同様データセット/動画は一切作られず、評価のみを高速に回せる。
@@ -236,7 +240,7 @@ pixi run sim-eval --policy <ckpt> --repo-id rollout_sim_eval_test
   - **cube の開始位置は速度で変わる**（`connect()`）: **停止時（`--belt-speed 0`）はロボット正面（y=0）に置かれ、その場で把持可能**（静的評価向け）。**稼働時は -y 端から供給**され、リーチ領域（home姿勢が向く正面中央 y=0 付近）を横切り、拾われなければ +y 端で落ちる。
   - **トレッドミル方式**: `SimSO101.send_action()` が毎制御ステップでスラブの slide 位置を 0 に戻す（速度=qvelには触れない）。接触面は動いて見えるので摩擦は効くが、緑のスラブ自体は世界座標で動かない（固定フレームがベルトらしさを出す）。これをしないと緑のスラブが流れて数秒でカメラから消える（=以前の「ベルトごと動く」状態）。
   - ベルトは有限長（`y∈[-0.30, 0.30]`）。
-  - **白い箱** (`box` ボディ、上面開放) はベルトの奥（far 側）に固定設置。掴んだ cube を入れる先で、リーチ内にあるが、**箱への配置を検出する成功判定は未実装**（現状の成功判定は cube の lift のまま。「箱へ配置」の判定は今後の課題）。
+  - **白い箱** (`box` ボディ、上面開放) はベルトの奥（far 側）に固定設置。掴んだ cube を入れる先。`--success-criterion place_in_box`（`SimSO101Config.success.criterion`）で、cube が箱の空洞内に静止したら成功とする判定が使える（箱ジオメトリの水平フットプリント内・上端リムより下・速度が `settle_speed_mps` 未満＝通過しただけは除外）。既定は従来どおり `lift`（cube を持ち上げたか）。
 
 汎用ロボットの `Robot` 抽象には `check_success()` を要求していない（duck-typed）。`so101_follower` など実機側は実装していないため、`eval` ストラテジーで実機を使うと常に `success=False` になる（警告ログが出る）。
 

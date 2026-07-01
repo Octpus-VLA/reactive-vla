@@ -13,6 +13,7 @@ first octpus vla project repository
 - **HPCバッチ学習** — `pixi run train` をインタラクティブに実行する代わりに、PBSジョブとして投入できます。PBSスクリプト自体はキュー名・`group_list` などサイト固有の設定を含むため、このリポジトリには含めていません。[ファインチューニング](#ファインチューニング)節のテンプレートを自分のサイト向けに調整して `jobs/` 以下に置いてください（`jobs/` は `.gitignore` 済みです）。
 - **MuJoCoシミュレーション** — 同梱の SO-101 モデル（実機と同じCAD由来、DeepMind Menagerieの`robotstudio_so101`）と `sim_so101` ロボットアダプタにより、実機無しで RTC 非同期ロールアウト経路を検証できます。詳細は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照。
 - **シム上での成功率評価**（`pixi run sim-eval`）— 学習済みポリシーをMuJoCoシム上で実行し、タスク成功率・成功ステップ数を計測（Lift基準: cubeを持ち上げたか）。`--repo-id rollout_<name>` を付ければ動画/データセットも録画できます。詳細は下記の[推論](#推論)を参照。
+- **シム上でのデモ収集**（`pixi run sim-collect`）— 特権状態を使うスクリプトIKエキスパートがMuJoCoシム内で pick-and-place を実演し、(観測, アクション) を `record` と同形式の `LeRobotDataset` に書き出します。実機データで学習したポリシーは sim レンダリング観測に対して分布外（real→sim 視覚ギャップ）なので、このシム観測データでファインチューニングしてギャップを埋めるのが狙いです。詳細は [docs/sim-scripted-collect.md](docs/sim-scripted-collect.md) を参照。
 
 ### SO-101 コマンド （`pixi run <command>`）
 
@@ -35,6 +36,7 @@ first octpus vla project repository
 | `policy-test --policy ... --repo-id ...` | オフライン推論の動作確認（ロボット不要） |
 | `eval --policy ... --task "..." --repo-id rollout_name` | 学習済みポリシーを follower で実行し評価エピソードを記録 |
 | `sim-eval --policy ... [--repo-id rollout_name]` | 学習済みポリシーをMuJoCoシム上で実行し成功率・成功ステップ数を評価 |
+| `sim-collect --episodes N --repo-id name` | スクリプトIKエキスパートでMuJoCoシム内の pick-and-place デモを収集（ファインチューニング用） |
 | `hf-login` / `wandb-login` | push/ロギング前の初回ログイン |
 
 各コマンドの全フラグは `pixi run <command> --help` で確認できます。転送系コマンド（`teleop`・`record`・`train`・`eval`・`sim-eval`・`replay`）の後に置いた引数は、対応する `lerobot-*` CLI にそのまま渡されます。
@@ -238,7 +240,9 @@ pixi run sim-eval --policy <checkpoint> --belt-distance 0.18 --repo-id rollout_s
 - **停止時（`--belt-speed 0`、既定）** — cube は**ロボットの正面**（`y=0`）に置かれ、その場で把持可能。静的なピック評価向け。
 - **稼働時（`--belt-speed > 0`）** — cube はベルトの `-y` 端から供給され、リーチ領域を横切るように運ばれる（アームのhome姿勢は cube が通る正面中央を向いている）。ベルトは `y∈[-0.30, 0.30]` なので、拾われなかった cube は +y 端で実機同様に落ちる。
 
-**`--belt-distance M`**（既定 `0.14` = ロボット基部からベルト近縁まで14cm）でベルト+箱+cube のレイアウト全体を前後にスライドできます（cube がアームのリーチ 約0.40m 内に収まる範囲で）。白い箱は掴んだ cube を入れる先ですが、**箱への配置の成功判定は未実装**です（成功判定は上記の lift 基準のまま）。
+**`--belt-distance M`**（既定 `0.14` = ロボット基部からベルト近縁まで14cm）でベルト+箱+cube のレイアウト全体を前後にスライドできます（cube がアームのリーチ 約0.40m 内に収まる範囲で）。
+
+**`--success-criterion`** で成功判定の種類を選べます: `lift`（既定・上記の Lift 基準）または **`place_in_box`** — cube が白い箱の**内部に静止**したら成功（フットプリント内・リムより下・静止）。つまりピック&プレース全体の成功。`--belt-speed` と組み合わせれば動的タスクになります。
 
 `sim-eval` は2つのシムカメラを使います: `camera1=wrist_cam`（upstreamモデルに最初から定義済みのeye-in-handカメラ、実機SO-101の手首マウントのCADデータに基づく。ポリシーに渡す観測で、実機SO-101の唯一の視覚入力に対応）と `overview`（`scene_cameras.xml`で追加した固定の外部視点。ポリシーには**渡さず**、`--repo-id`での録画時にデータセットへ残すだけ。今後のcube位置/速度predictor用）。ポリシーが`camera1`以外（`camera2`/`camera3`）も期待する場合は、無い分はマスク付きのダミー画像で自動的に埋められます。
 
