@@ -1119,18 +1119,22 @@ def sim_eval(
     else:
         cmd.append("--inference.type=sync")
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
-    _run(cmd + list(ctx.args))
-
-    # Co-locate the eval result with the recorded rollout so the metrics live next
-    # to the videos/frames. The rollout stamps the repo id with a timestamp, so
-    # copy the summary into the newest matching dataset dir as `eval_summary.json`.
-    if repo_id and Path(out_path).exists():
-        base = _dataset_root(repo)
-        stamped = sorted(base.parent.glob(f"{base.name}_*"), key=lambda p: p.stat().st_mtime)
-        dest_dir = stamped[-1] if stamped else (base if base.exists() else None)
-        if dest_dir is not None:
-            shutil.copy(out_path, dest_dir / "eval_summary.json")
-            typer.secho(f"(eval summary copied to {dest_dir / 'eval_summary.json'})", fg="green")
+    try:
+        _run(cmd + list(ctx.args))
+    finally:
+        # Co-locate the eval result with the recorded rollout so the metrics live
+        # next to the videos/frames. In `finally` because _run() always raises
+        # typer.Exit(rc) (so code after it never runs). The rollout stamps the repo
+        # id with a timestamp, so copy the summary into the newest matching dataset
+        # dir as `eval_summary.json`. Best-effort — never mask the real exit.
+        if repo_id and Path(out_path).exists():
+            base = _dataset_root(repo)
+            stamped = sorted(base.parent.glob(f"{base.name}_*"), key=lambda p: p.stat().st_mtime)
+            dest_dir = stamped[-1] if stamped else (base if base.exists() else None)
+            if dest_dir is not None:
+                with suppress(Exception):
+                    shutil.copy(out_path, dest_dir / "eval_summary.json")
+                    typer.secho(f"(eval summary → {dest_dir / 'eval_summary.json'})", fg="green")
 
 
 # Function name is distinct from the imported `sim_collect` module (the CLI name
