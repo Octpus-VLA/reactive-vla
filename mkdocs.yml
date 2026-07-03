@@ -80,4 +80,5 @@ nav:
   - lerobot editable 構成: lerobot-editable-setup.md
   - RTC sim ロールアウト: rtc-sim-rollout.md
   - sim スクリプトエキスパート収集: sim-scripted-collect.md
+  - 非同期レイテンシ実験（sync vs RTC）: latency-experiments.md
   - overhead カメラ予測器による動的 pick: overhead-predictor.md
