@@ -2,8 +2,8 @@
   <!-- scene_cameras.xml（アーム+床+カメラ）に、緑のコンベアベルト・白い箱・掴む対象の
        cube を足したもの。前後配置（+x が奥）: robot(0) → belt(中心 x=0.19, 近縁が基部
        から14cm) → box(中心 x=0.30)。いずれもアームのリーチ（実測 約0.40m）内。
-       ベルトは「固定フレーム（サイドレール/エンドキャップ/モーター箱）」と「動く表面
-       スラブ」の2部構成。表面スラブは slide joint + 速度アクチュエータで接線速度を持つが、
+       ベルトは「固定フレーム（サイドレール/エンドキャップ）」と「動く表面スラブ」の
+       2部構成。表面スラブは slide joint + 速度アクチュエータで接線速度を持つが、
        SimSO101.send_action() が毎制御ステップで位置を 0 に戻すトレッドミル方式なので、
        緑は動かず上に乗った cube だけが摩擦で運ばれる。cube はベルト +y 端 (y=0.30) まで
        運ばれると実機同様に端から落ちる。箱は掴んだ cube を入れる先（配置検出は今後の課題、
@@ -18,12 +18,11 @@
   </asset>
 
   <worldbody>
-    <!-- Static conveyor frame: aluminium base + side rails + dark end brackets + a motor
-         box, all fixed (no joint) and visual-only (contype/conaffinity 0) — purely to
-         read as a real belt rig. (Black end rollers removed per request.) Only the green
-         top surface (the "belt" body below) actually moves. Centered at x=0.19 (near edge
-         14cm from the robot base), spanning y in [-0.30, 0.30]; the +x side carries the
-         motor box. -->
+    <!-- Static conveyor frame: aluminium base + side rails + dark end brackets, all fixed
+         (no joint) and visual-only (contype/conaffinity 0) — purely to read as a real belt
+         rig. (Black end rollers and the cosmetic motor housing removed per request.) Only
+         the green top surface (the "belt" body below) actually moves. Centered at x=0.19
+         (near edge 14cm from the robot base), spanning y in [-0.30, 0.30]. -->
     <body name="conveyor_frame" pos="0.19 0 0">
       <geom name="belt_base" type="box" pos="0 0 0.014" size="0.05 0.30 0.012"
             material="belt_alu_mat" contype="0" conaffinity="0"/>
@@ -35,10 +34,6 @@
             material="belt_dark_mat" contype="0" conaffinity="0"/>
       <geom name="belt_endcap_pos" type="box" pos="0 0.327 0.02" size="0.067 0.012 0.022"
             material="belt_dark_mat" contype="0" conaffinity="0"/>
-      <geom name="belt_motor_box" type="box" pos="0.092 0.18 0.03" size="0.025 0.04 0.028"
-            material="belt_dark_mat" contype="0" conaffinity="0"/>
-      <geom name="belt_motor_knob" type="cylinder" fromto="0.117 0.18 0.03  0.131 0.18 0.03"
-            size="0.012" material="belt_dark_mat" contype="0" conaffinity="0"/>
     </body>
 
     <!-- The moving belt surface (treadmill). The slide joint + velocity actuator give it
@@ -107,8 +102,14 @@
        empirically: swept shoulder_pan/shoulder_lift/elbow_flex/wrist_flex within their
        joint ranges, kept poses where the front-centre cube projects inside wrist_cam's
        FOV, picked one with the gripper a few cm short of it. qpos order is [shoulder_pan,
-       shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper, belt_slide, cube(7)]. -->
+       shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper, belt_slide, cube(7)].
+
+       wrist_roll = +pi/2 (was 0): rotates the jaw open/close axis to align with world Y —
+       the belt's long axis / the cube's direction of travel — instead of the previous
+       roughly-X alignment (measured empirically: at wrist_roll=0 the fixed->moving jaw tip
+       vector was ~(0.83, 0.07, 0.55); at +pi/2 it's ~(-0.10, 0.99, 0.02), i.e. almost pure
+       Y). Box/robot/belt positions are unchanged — only this joint angle moved. -->
   <keyframe>
-    <key name="home" qpos="-0.1745329 -0.9599311 0.3490659 1.5707963 0 0 0 0.19 0.0 0.055 1 0 0 0"/>
+    <key name="home" qpos="-0.1745329 -0.9599311 0.3490659 1.5707963 1.5707963 0 0 0.19 0.0 0.055 1 0 0 0"/>
   </keyframe>
 </mujoco>
