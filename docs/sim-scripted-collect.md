@@ -19,16 +19,14 @@
 
 | キー | MuJoCo カメラ | 用途 | ポリシー入力 |
 |---|---|---|---|
-| `camera1` | `wrist_cam` | 手首 eye-in-hand（実機 SO-101 の唯一の視覚入力） | ✅ これのみ |
-| `overview` | `overview` | 固定外部視点（斜め前方） | ❌ 記録のみ |
-| `belt_top` | `belt_top` | ベルト真上の俯瞰（cube 位置・速度トラッキング向き） | ❌ 記録のみ |
-| `box_top` | `box_top` | 箱側からロボットを見る三人称 | ❌ 記録のみ |
-| `front_high` | `front_high` | 正面から箱の開口を映す（配置確認向き） | ❌ 記録のみ |
-| `corner` | `corner` | 斜め上のアイソメ全景（可視化・デモ向き） | ❌ 記録のみ |
+| `camera1` | `wrist_cam` | 手首 eye-in-hand（実機 SO-101 の唯一の視覚入力） | 現行の標準ではない（下記参照） |
+| `overview` | `overview`（旧 `box_top`） | 箱側からロボットを見る固定外部視点 | ✅ これのみ |
 
-> **記録専用ビューは実機に存在しない固定外部カメラ**（手首カメラのみの実機に転送する把持ポリシーの入力には使わない）。cube 位置・速度の predictor（Tier 3）学習、配置成否の確認、可視化・解析のために残している。学習時は `--rename_map` / policy の入力カメラ指定で `camera1` だけを使えば、これらは自動的に学習から除外される。追加カメラの分だけ動画エンコードとデータ量が増えるので、不要なら `collect(cameras=...)` で絞る。`belt_top` 等は `mode="targetbody"` で対象を自動追尾するため `--belt-distance` を変えても画角を保つ。
+> 以前は `belt_top` / `front_high` / `corner` も記録していたが、実際には使っていなかったため削除した（`overview`＝旧 `box_top` に一本化）。
 
-> **現在の標準ワークフローは `box_top` を入力カメラにする**（`camera1=wrist_cam` は収集データには引き続き入っているが、学習時に使わない）。`jobs/train/smolvla.pbs` の既定 `CAMERA=box_top` が `observation.images.box_top → observation.images.camera1` に rename して学習する（`sim-eval` 側も `--policy-camera` の既定が `box_top`）。理由は下記「掴む向きの調整」を参照。
+> **記録専用ビューは実機に存在しない固定外部カメラ**（手首カメラのみの実機に転送する把持ポリシーの入力には使わない）。cube 位置・速度の predictor（Tier 3）学習、配置成否の確認、可視化・解析のために残している。学習時は `--rename_map` / policy の入力カメラ指定で使うカメラだけを選べば、他は自動的に学習から除外される。`overview` は `mode="targetbody"` でロボット base を自動追尾するため `--belt-distance` を変えても画角を保つ。
+
+> **現在の標準ワークフローは `overview` を入力カメラにする**（`camera1=wrist_cam` は収集データには引き続き入っているが、学習時に使わない）。`jobs/train/smolvla.pbs` の既定 `CAMERA=overview` が `observation.images.overview → observation.images.camera1` に rename して学習する（`sim-eval` 側も `--policy-camera` の既定が `overview`）。理由は下記「掴む向きの調整」を参照。
 
 ## 動かし方
 
@@ -94,6 +92,10 @@ home キーフレームの `wrist_roll` を `0 → +90°`（[`assets/so101/scene
 
 この回転にともない、上記の `max_tcp_step` 調整が必要になった（保持力が変わったため）。
 
+### wrist_cam の待ち受け高さ調整（ベルトが見えるように）
+
+`GraspConfig.approach_height`（待ち受け・持ち上げ・運搬時の TCP 高さ、cube/box 中心からの高さ）は元々 `0.10` m だったが、この高さでは手首カメラ（下向きに固定角で搭載、実機 CAD 由来なのでマウント自体は変更不可）が待ち受け中にベルトのほぼ真上を素通りして奥の市松模様の床（地平線側）を映してしまい、ベルトは画面上端にわずかに映る程度だった。`approach_height=0.06` に下げることで、待ち受け中も画面の大半にベルトが映るようになる（cube が近づくと画面いっぱいに映る）。速度 0.03-0.12 m/s・jitter 0.01 で再検証し 56/56 = 100% 維持を確認済み（機能面のコストなし）。
+
 ## 現状（実測、掴む向き調整後の最新版）
 
 - **標準収集レシピ**（`jobs/collect/sim.pbs` の既定に反映済み）:
@@ -103,7 +105,7 @@ home キーフレームの `wrist_roll` を `0 → +90°`（[`assets/so101/scene
   ```
   速度域 0.03-0.12 m/s ランダム化・jitter 0.01・150 エピソードで **150/150 = 100%** 箱入れ成功（GH200）。
 - 個別確認: `max_tcp_step=0.008` にした上で、速度域 0.03/0.05/0.07/0.09/0.10/0.11/0.12 各 8 回 = 56/56 = 100%、静止 cube も 4/4 = 100%。
-- 生成データセットは `LeRobotDataset` で読み込め、`observation.state (6)` / `action (6)` / `observation.images.{camera1,overview,belt_top,box_top,front_high,corner} video` を持ち、`pixi run train` 互換（学習時は `CAMERA=box_top` で box_top を camera1 にリネーム）。
+- 生成データセットは `LeRobotDataset` で読み込め、`observation.state (6)` / `action (6)` / `observation.images.{camera1,overview} video` を持ち、`pixi run train` 互換（学習時は `CAMERA=overview` で overview を camera1 にリネーム）。
 
 > 過去の実測値（掴む向き調整前・`max_tcp_step=0.015`・jitter 0.03 の版）: 静止 4/4、固定速度各 4/4、jitter=0.03 のまま速度ランダム化すると 150ep で 59% まで低下（原因が上記の掴む向き変更起因の不安定性）。調査の経緯は [docs/latency-experiments.md](latency-experiments.md) 隣接のコミット履歴も参照。
 

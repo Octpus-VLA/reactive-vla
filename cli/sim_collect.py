@@ -56,8 +56,13 @@ CUBE_JOINT = "cube_free"
 class GraspConfig:
     """Tunable geometry for the scripted pick-and-place, all in metres / m·s."""
 
-    # Height above the cube/box centre the TCP approaches and retreats to.
-    approach_height: float = 0.10
+    # Height above the cube/box centre the TCP approaches and retreats to. Also
+    # sets how close wrist_cam hovers over the belt while waiting for the cube —
+    # 0.10 pointed the downward-canted eye-in-hand view mostly past the belt at
+    # the far-off checkered floor (only a thin sliver of belt at the frame top);
+    # 0.06 fills the frame with the belt while it waits. Re-verified 56/56 across
+    # belt_speed 0.03-0.12 (jitter=0.01) after lowering it, so no functional cost.
+    approach_height: float = 0.06
     # TCP z offset relative to the cube centre at the moment of grasp. Slightly
     # below centre so the jaws straddle the cube rather than skim its top.
     grasp_z_offset: float = -0.005
@@ -465,14 +470,10 @@ def collect(
     cam_specs = cameras or {
         # Policy input: the real SO-101's only camera (wrist-mounted eye-in-hand).
         "camera1": SimCameraConfig(mujoco_name="wrist_cam", width=320, height=240),
-        # Recording-only privileged external views (defined in scene_cube.xml). Not
-        # for a wrist-cam-only transfer policy — kept in the dataset for a future
-        # cube-position/velocity predictor, place verification, and visualisation.
+        # Recording-only privileged external view (defined in scene_cube.xml, was
+        # box_top). Not for a wrist-cam-only transfer policy — kept in the dataset
+        # for a future cube-position/velocity predictor and place verification.
         "overview": SimCameraConfig(mujoco_name="overview", width=320, height=240),
-        "belt_top": SimCameraConfig(mujoco_name="belt_top", width=320, height=240),
-        "box_top": SimCameraConfig(mujoco_name="box_top", width=320, height=240),
-        "front_high": SimCameraConfig(mujoco_name="front_high", width=320, height=240),
-        "corner": SimCameraConfig(mujoco_name="corner", width=320, height=240),
     }
     config = SimSO101Config(
         mjcf_path=str(mjcf_path),

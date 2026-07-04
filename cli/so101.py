@@ -971,20 +971,19 @@ def sim_eval(
         help="'lift' only: meters the body must rise above its resting height to count as lifted.",
     ),
     policy_camera: str = typer.Option(
-        "box_top",
+        "overview",
         "--policy-camera",
         help="MuJoCo camera fed to the policy as observation.images.camera1 — must match the camera "
-        "the policy was TRAINED on. Defaults to box_top (the current single-camera setup); override "
-        "for a policy trained on a different view, e.g. --policy-camera wrist_cam.",
+        "the policy was TRAINED on. Defaults to overview (the current single-camera setup, formerly "
+        "named box_top); override for a policy trained on a different view, e.g. --policy-camera wrist_cam.",
     ),
     record_cameras: str = typer.Option(
         "",
         "--record-cameras",
         help="Comma-separated EXTRA MuJoCo cameras to ALSO render into the --repo-id dataset (not fed "
-        "to the policy), e.g. overview,belt_top,front_high,corner. Empty by default: only the "
-        "--policy-camera is rendered (as camera1) — every extra camera is another CPU (osmesa) "
-        "render per control step, so keep this minimal for speed. Duplicates of the policy camera "
-        "are dropped. Only matters with --repo-id.",
+        "to the policy), e.g. wrist_cam. Empty by default: only the --policy-camera is rendered (as "
+        "camera1) — every extra camera is another CPU (osmesa) render per control step, so keep this "
+        "minimal for speed. Duplicates of the policy camera are dropped. Only matters with --repo-id.",
     ),
     stream_video: bool = typer.Option(
         False,
@@ -1068,8 +1067,9 @@ def sim_eval(
         typer.secho(f"(recording episodes to {repo})", fg="yellow")
 
     # camera1 = --policy-camera: the view fed to the policy, which must match what
-    # it was trained on (default wrist_cam = the real rig's eye-in-hand view; use
-    # box_top etc. for a policy trained on that). Any --record-cameras are extra
+    # it was trained on (default overview = the external top-down view; use
+    # wrist_cam for a policy trained on the eye-in-hand view instead). Any
+    # --record-cameras are extra
     # fixed views rendered into the dataset only (not consumed by the policy). The
     # rollout context rejects a robot camera the policy doesn't expect unless it's
     # in --rename_map (a no-op identity entry there takes the skip-check branch).
