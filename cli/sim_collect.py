@@ -122,7 +122,15 @@ class IKConfig:
     # Jacobian step so a far target (e.g. the lateral jump from carry to place)
     # can't produce a violent one-step swing that flings the held cube out of the
     # jaws — the arm instead glides toward it at a bounded ~max_tcp_step·fps speed.
-    max_tcp_step: float = 0.015
+    # 0.015 was tuned for the original jaw orientation (open/close axis ~world X);
+    # after rotating the grasp to align with the belt's Y axis (see scene_cube.xml's
+    # home keyframe wrist_roll), the grip holds the cube less securely against a
+    # sideways swing, and 0.015 let carry->place fling it clear of the box at some
+    # belt speeds (cube ending up 5-9cm past the box) and turned x-position
+    # reachability at the grasp into a chaotic, non-monotonic pass/fail pattern.
+    # 0.008 fixed both (verified: monotonic x-reach boundary restored, no more
+    # mid-transition drops) at the cost of slightly slower phase transitions.
+    max_tcp_step: float = 0.008
 
 
 class _Sim:
