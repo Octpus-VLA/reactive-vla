@@ -1195,6 +1195,14 @@ def sim_collect_cmd(
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Delete an existing local dataset with this id first."
     ),
+    wait_steps: int = typer.Option(
+        None,
+        "--wait-steps",
+        help="Max control steps the approach phase hovers waiting for the cube before giving up "
+        "(GraspConfig default 240 ≈ 8s). Very slow belts need the cube longer to arrive — e.g. "
+        "0.01 m/s needs ~650 steps total, so this must be raised (~700) or the expert gives up before "
+        "the cube shows up and every episode misses. Defaults are fine for belt_speed >= ~0.015.",
+    ),
 ) -> None:
     """Record scripted-expert pick-and-place demos in the MuJoCo sim (no hardware).
 
@@ -1226,6 +1234,7 @@ def sim_collect_cmd(
     if belt_speed_max is not None and belt_speed_max > belt_speed:
         typer.secho(f"(belt speed varies per episode in [{belt_speed}, {belt_speed_max}] m/s)", fg="yellow")
     typer.secho(f"(recording {episodes} scripted episodes to {repo})", fg="yellow")
+    grasp = sim_collect.GraspConfig(wait_steps=wait_steps) if wait_steps is not None else None
     summary = sim_collect.collect(
         repo_id=repo,
         task=task,
@@ -1239,6 +1248,7 @@ def sim_collect_cmd(
         jitter_xy=jitter,
         seed=seed,
         push=push,
+        grasp=grasp,
     )
     typer.secho(
         f"recorded {summary['episodes']} episodes, "
