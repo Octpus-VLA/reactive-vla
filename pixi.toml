@@ -38,6 +38,7 @@ replay = "python cli/so101.py replay"            # usage: pixi run replay --repo
 viz = "python cli/so101.py viz"                  # usage: pixi run viz --repo-id name --episode 0
 drop = "python cli/so101.py drop"                # usage: pixi run drop --repo-id name --episodes 0,2
 upload = "python cli/so101.py upload"            # usage: pixi run upload --repo-id name  (existing local dataset)
+merge-rollouts = "python cli/so101.py merge-rollouts"  # usage: pixi run merge-rollouts --prefix rollout_check_ --output-repo-id rollout_check_allspeeds
 train = "python cli/so101.py train"              # usage: pixi run train --repo-id name [--policy act | --policy-path lerobot/smolvla_base] [--wandb] [--push-repo-id name]
 push-policy = "python cli/so101.py push-policy"  # usage: pixi run push-policy --checkpoint outputs/train/<job>/checkpoints/last --repo-id name
 eval = "python cli/so101.py eval"                # usage: pixi run eval --policy <ckpt> --task "..." --repo-id eval_name

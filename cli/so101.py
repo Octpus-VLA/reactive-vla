@@ -1428,6 +1428,53 @@ def upload(
     typer.secho(f"Uploaded → https://huggingface.co/datasets/{repo}", fg="green")
 
 
+@app.command("merge-rollouts")
+def merge_rollouts(
+    prefix: str = typer.Option(
+        ...,
+        "--prefix",
+        help="Merge every local dataset under $HF_LEROBOT_HOME/<any namespace>/ whose name starts with "
+        "this prefix (e.g. --prefix rollout_check_ merges rollout_check_003, rollout_check_005, ... "
+        "— the per-speed rollouts from one sim-eval --repo-id run each). Order is by directory mtime.",
+    ),
+    output_repo_id: str = typer.Option(
+        ..., "--output-repo-id", help="Name for the merged dataset ('name' → prefixed with your HF user)."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Delete an existing local dataset with the output id first."
+    ),
+) -> None:
+    """Merge same-model rollouts recorded under separate --repo-id runs (e.g. one per belt speed)
+    into a single dataset, so `pixi run viz` / training can look at them together as one set of
+    episodes instead of scattered directories. Uses lerobot's merge_datasets (physically concatenates
+    the parquet/video files; episode indices are renumbered).
+    """
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+
+    root = Path(HF_LEROBOT_HOME)
+    matches = sorted(
+        (p for p in root.glob(f"*/{prefix}*") if p.is_dir() and (p / "meta" / "info.json").exists()),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not matches:
+        raise typer.BadParameter(f"No local datasets under {root}/*/ match prefix '{prefix}'.")
+    typer.secho(f"Merging {len(matches)} dataset(s):", fg="blue")
+    for p in matches:
+        typer.secho(f"  {p.relative_to(root)}", fg="blue")
+
+    from lerobot.datasets.dataset_tools import merge_datasets
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    out_repo = _resolve_repo(output_repo_id, for_creation=True)
+    _maybe_overwrite(out_repo, overwrite)
+    datasets = [LeRobotDataset(repo_id=p.parent.name + "/" + p.name, root=p) for p in matches]
+    merge_datasets(datasets, output_repo_id=out_repo, output_dir=_dataset_root(out_repo))
+    typer.secho(
+        f"Merged → {_dataset_root(out_repo)} ({sum(d.num_episodes for d in datasets)} episodes total)",
+        fg="green",
+    )
+
+
 @app.command("push-policy")
 def push_policy(
     checkpoint: str = typer.Option(
