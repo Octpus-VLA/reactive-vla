@@ -1441,11 +1441,21 @@ def upload(
 @app.command("merge-rollouts")
 def merge_rollouts(
     prefix: str = typer.Option(
-        ...,
+        None,
         "--prefix",
         help="Merge every local dataset under $HF_LEROBOT_HOME/<any namespace>/ whose name starts with "
-        "this prefix (e.g. --prefix rollout_check_ merges rollout_check_003, rollout_check_005, ... "
-        "— the per-speed rollouts from one sim-eval --repo-id run each). Order is by directory mtime.",
+        "this prefix, using ALL of each one's episodes (e.g. --prefix rollout_check_ merges "
+        "rollout_check_003, rollout_check_005, ...). Order is by directory mtime. Mutually exclusive "
+        "with --repo-ids.",
+    ),
+    repo_ids: str = typer.Option(
+        None,
+        "--repo-ids",
+        help="Comma-separated dataset ids to merge, each optionally capped with ':N' to use only its "
+        "first N episodes (omit for all), e.g. --repo-ids "
+        "sim_pickplace_speed001:40,sim_pickplace_speed010:10 — lets you collect one fixed pool per "
+        "speed ONCE and then compose different low/high-speed-weighted training mixes from the same "
+        "pools without re-collecting, just by changing the counts here. Mutually exclusive with --prefix.",
     ),
     output_repo_id: str = typer.Option(
         ..., "--output-repo-id", help="Name for the merged dataset ('name' → prefixed with your HF user)."
@@ -1454,30 +1464,45 @@ def merge_rollouts(
         False, "--overwrite", help="Delete an existing local dataset with the output id first."
     ),
 ) -> None:
-    """Merge same-model rollouts recorded under separate --repo-id runs (e.g. one per belt speed)
+    """Merge rollouts/collections recorded under separate --repo-id runs (e.g. one per belt speed)
     into a single dataset, so `pixi run viz` / training can look at them together as one set of
     episodes instead of scattered directories. Uses lerobot's merge_datasets (physically concatenates
     the parquet/video files; episode indices are renumbered).
     """
-    from lerobot.utils.constants import HF_LEROBOT_HOME
-
-    root = Path(HF_LEROBOT_HOME)
-    matches = sorted(
-        (p for p in root.glob(f"*/{prefix}*") if p.is_dir() and (p / "meta" / "info.json").exists()),
-        key=lambda p: p.stat().st_mtime,
-    )
-    if not matches:
-        raise typer.BadParameter(f"No local datasets under {root}/*/ match prefix '{prefix}'.")
-    typer.secho(f"Merging {len(matches)} dataset(s):", fg="blue")
-    for p in matches:
-        typer.secho(f"  {p.relative_to(root)}", fg="blue")
-
     from lerobot.datasets.dataset_tools import merge_datasets
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.utils.constants import HF_LEROBOT_HOME
 
+    if (prefix is None) == (repo_ids is None):
+        raise typer.BadParameter("Pass exactly one of --prefix or --repo-ids.")
+
+    root = Path(HF_LEROBOT_HOME)
+    datasets = []
+    if prefix is not None:
+        matches = sorted(
+            (p for p in root.glob(f"*/{prefix}*") if p.is_dir() and (p / "meta" / "info.json").exists()),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if not matches:
+            raise typer.BadParameter(f"No local datasets under {root}/*/ match prefix '{prefix}'.")
+        for p in matches:
+            typer.secho(f"  {p.relative_to(root)} (all episodes)", fg="blue")
+            datasets.append(LeRobotDataset(repo_id=f"{p.parent.name}/{p.name}", root=p))
+    else:
+        for entry in repo_ids.split(","):
+            entry = entry.strip()
+            name, _, cap = entry.partition(":")
+            repo = _resolve_repo(name.strip())
+            root_dir = _dataset_root(repo)
+            if not root_dir.exists():
+                raise typer.BadParameter(f"No local dataset at {root_dir} (from '{entry}').")
+            episodes = list(range(int(cap))) if cap else None
+            typer.secho(f"  {repo} ({cap or 'all'} episodes)", fg="blue")
+            datasets.append(LeRobotDataset(repo_id=repo, root=root_dir, episodes=episodes))
+
+    typer.secho(f"Merging {len(datasets)} dataset(s)...", fg="blue")
     out_repo = _resolve_repo(output_repo_id, for_creation=True)
     _maybe_overwrite(out_repo, overwrite)
-    datasets = [LeRobotDataset(repo_id=p.parent.name + "/" + p.name, root=p) for p in matches]
     merge_datasets(datasets, output_repo_id=out_repo, output_dir=_dataset_root(out_repo))
     typer.secho(
         f"Merged → {_dataset_root(out_repo)} ({sum(d.num_episodes for d in datasets)} episodes total)",
