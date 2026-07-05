@@ -1006,6 +1006,19 @@ def sim_eval(
     ),
     execution_horizon: int = typer.Option(10, "--execution-horizon", help="RTC only: see `eval --help`."),
     queue_threshold: int = typer.Option(30, "--queue-threshold", help="RTC only: see `eval --help`."),
+    predict_cube: bool = typer.Option(
+        False,
+        "--predict-cube/--no-predict-cube",
+        help="RTC only: enable the overhead cube predictor (Tier 3). The red cube is advanced forward "
+        "by the inference latency (PE gap) on --predictor-camera and the time-advanced frame is fed "
+        "to the policy. See `eval --help` for the real-hardware equivalent.",
+    ),
+    predictor_camera: str = typer.Option(
+        None,
+        "--predictor-camera",
+        help="Dataset-facing camera key the cube predictor watches (defaults to camera1, the "
+        "--policy-camera view). Must be camera1 or one of --record-cameras.",
+    ),
     repo_id: str = typer.Option(
         None,
         "--repo-id",
@@ -1031,6 +1044,11 @@ def sim_eval(
     No recording happens unless `--repo-id` is given — by default this only
     measures success rate / success step, exactly like the rest of `eval`'s
     docs above describe.
+
+    Add --predict-cube (needs --rtc) to advance the tracked cube forward by
+    the inference latency on --predictor-camera before feeding the frame to
+    the policy — the Tier 3 predictor, same mechanism as `eval --predict-cube`
+    on real hardware. See docs/latency-experiments.md.
     """
     # Headless offscreen rendering by default — without it MuJoCo falls back to a
     # windowed GLFW context and crashes on HPC nodes with no DISPLAY. osmesa (CPU
@@ -1122,6 +1140,22 @@ def sim_eval(
         ]
     else:
         cmd.append("--inference.type=sync")
+    if predict_cube:
+        if not rtc:
+            raise typer.BadParameter("--predict-cube requires --rtc (the predictor feeds the RTC engine).")
+        cam_key = predictor_camera or "camera1"
+        valid_keys = {"camera1", *extra_cams}
+        if cam_key not in valid_keys:
+            raise typer.BadParameter(
+                f"--predictor-camera '{cam_key}' must be one of {sorted(valid_keys)} "
+                "(camera1, or one of --record-cameras)."
+            )
+        # Predictor advances the cube by the inference latency (see lerobot.predictors /
+        # docs/overhead-predictor.md) — same mechanism as the real-hardware `eval --predict-cube`.
+        cmd += [
+            "--inference.predictor.enabled=true",
+            f"--inference.predictor.camera={cam_key}",
+        ]
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
     try:
         _run(cmd + list(ctx.args))
