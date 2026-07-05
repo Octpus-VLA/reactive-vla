@@ -1074,7 +1074,9 @@ def sim_eval(
     # rollout context rejects a robot camera the policy doesn't expect unless it's
     # in --rename_map (a no-op identity entry there takes the skip-check branch).
     extra_cams = list(
-        dict.fromkeys(c.strip() for c in record_cameras.split(",") if c.strip() and c.strip() != policy_camera)
+        dict.fromkeys(
+            c.strip() for c in record_cameras.split(",") if c.strip() and c.strip() != policy_camera
+        )
     )
     cam_entries = [f"camera1: {{mujoco_name: {policy_camera}, width: 320, height: 240}}"]
     cam_entries += [f"{c}: {{mujoco_name: {c}, width: 320, height: 240}}" for c in extra_cams]
