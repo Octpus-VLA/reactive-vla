@@ -931,7 +931,7 @@ def sim_eval(
         help="Max control steps (sim-time bound, reproducible) per episode — the backstop that "
         "caps the rollout if the cube never leaves the belt (e.g. static belt, idle policy). On a "
         "moving belt --end-on-drop usually ends it much sooner (the cube falls off the far end). "
-        "1000 ≈ 33s of sim time at --fps 30. Set 0/None to disable.",
+        "1000 ≈ 33s of sim time at --fps 30. Set 0 to disable.",
     ),
     reset_time: float = typer.Option(3, "--reset-time", help="Seconds held between episodes."),
     belt_speed: float = typer.Option(
@@ -1073,7 +1073,9 @@ def sim_eval(
     # fixed views rendered into the dataset only (not consumed by the policy). The
     # rollout context rejects a robot camera the policy doesn't expect unless it's
     # in --rename_map (a no-op identity entry there takes the skip-check branch).
-    extra_cams = [c.strip() for c in record_cameras.split(",") if c.strip() and c.strip() != policy_camera]
+    extra_cams = list(
+        dict.fromkeys(c.strip() for c in record_cameras.split(",") if c.strip() and c.strip() != policy_camera)
+    )
     cam_entries = [f"camera1: {{mujoco_name: {policy_camera}, width: 320, height: 240}}"]
     cam_entries += [f"{c}: {{mujoco_name: {c}, width: 320, height: 240}}" for c in extra_cams]
     cmd = [

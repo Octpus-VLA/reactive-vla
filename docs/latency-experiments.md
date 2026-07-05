@@ -5,7 +5,8 @@
 ## 対象ポリシー / 条件
 
 - ポリシー: `lerobot/smolvla_base` を **シム収集データ `OctpusVLA/sim_pickplace_belt_010`**（白アーム・`box_top` 単一カメラ・belt 0.10・50 エピソード）で 40000 steps ファインチューニング。学習 loss 0.82→0.003、**同条件の同期評価で 10/10**。
-- 評価: `pixi run sim-eval`、入力カメラ `box_top → observation.images.camera1`、`--success-criterion place_in_box`、`--end-on-drop`（cube がベルトから落ちたら/箱に入ったら終了）、各 10 ロールアウト、`--device cuda`。
+  （`box_top` はこの実験当時のカメラ名。現在のコードでは `overview` にリネーム済み — 同じ外部視点カメラを指す。）
+- 評価: `pixi run sim-eval`、入力カメラ `box_top`(現 `overview`) `→ observation.images.camera1`、`--success-criterion place_in_box`、`--end-on-drop`（cube がベルトから落ちたら/箱に入ったら終了）、各 10 ロールアウト、`--device cuda`。
 - 同期 = `--rtc` なし（推論中は sim が凍結）。非同期 = `--rtc`（推論を別スレッドで回し、その間も sim=ベルトが進む。[docs/rtc-sim-rollout.md](rtc-sim-rollout.md) 参照）。
 
 ## 実験1: 同期 vs 非同期（belt 0.10）
@@ -58,8 +59,9 @@ bash jobs/experiments/belt_speed_sweep.pbs    # or qsub（バッチ）
 GPU ノードで実行（推論が CUDA、ログインノードは CPU で極端に遅い）。結果は `outputs/experiments/<name>_<ts>/results.md` に表で残る。単発は例えば:
 ```bash
 pixi run sim-eval --policy <ckpt> --belt-speed 0.10 --success-criterion place_in_box \
-  --rtc --device cuda --episodes 10 --repo-id rollout_sim_boxtop_rtc   # 非同期
+  --policy-camera overview --rtc --device cuda --episodes 10 --repo-id rollout_sim_boxtop_rtc   # 非同期
 pixi run sim-eval --policy <ckpt> --belt-speed 0.10 --success-criterion place_in_box \
-  --device cuda --episodes 10 --repo-id rollout_sim_boxtop_sync        # 同期
+  --policy-camera overview --device cuda --episodes 10 --repo-id rollout_sim_boxtop_sync        # 同期
 ```
+（`--policy-camera` は既定が `overview` だが、将来デフォルトが変わっても再現できるよう明示している。）
 `--repo-id` を付けると動画＋ `eval_summary.json` が rollout ディレクトリに残る。
