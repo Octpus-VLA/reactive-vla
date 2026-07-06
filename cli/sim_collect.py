@@ -56,8 +56,13 @@ CUBE_JOINT = "cube_free"
 class GraspConfig:
     """Tunable geometry for the scripted pick-and-place, all in metres / m·s."""
 
-    # Height above the cube/box centre the TCP approaches and retreats to.
-    approach_height: float = 0.10
+    # Height above the cube/box centre the TCP approaches and retreats to. Also
+    # sets how close wrist_cam hovers over the belt while waiting for the cube —
+    # 0.10 pointed the downward-canted eye-in-hand view mostly past the belt at
+    # the far-off checkered floor (only a thin sliver of belt at the frame top);
+    # 0.06 fills the frame with the belt while it waits. Re-verified 56/56 across
+    # belt_speed 0.03-0.12 (jitter=0.01) after lowering it, so no functional cost.
+    approach_height: float = 0.06
     # TCP z offset relative to the cube centre at the moment of grasp. Slightly
     # below centre so the jaws straddle the cube rather than skim its top.
     grasp_z_offset: float = -0.005
@@ -122,7 +127,15 @@ class IKConfig:
     # Jacobian step so a far target (e.g. the lateral jump from carry to place)
     # can't produce a violent one-step swing that flings the held cube out of the
     # jaws — the arm instead glides toward it at a bounded ~max_tcp_step·fps speed.
-    max_tcp_step: float = 0.015
+    # 0.015 was tuned for the original jaw orientation (open/close axis ~world X);
+    # after rotating the grasp to align with the belt's Y axis (see scene_cube.xml's
+    # home keyframe wrist_roll), the grip holds the cube less securely against a
+    # sideways swing, and 0.015 let carry->place fling it clear of the box at some
+    # belt speeds (cube ending up 5-9cm past the box) and turned x-position
+    # reachability at the grasp into a chaotic, non-monotonic pass/fail pattern.
+    # 0.008 fixed both (verified: monotonic x-reach boundary restored, no more
+    # mid-transition drops) at the cost of slightly slower phase transitions.
+    max_tcp_step: float = 0.008
 
 
 class _Sim:
@@ -457,14 +470,10 @@ def collect(
     cam_specs = cameras or {
         # Policy input: the real SO-101's only camera (wrist-mounted eye-in-hand).
         "camera1": SimCameraConfig(mujoco_name="wrist_cam", width=320, height=240),
-        # Recording-only privileged external views (defined in scene_cube.xml). Not
-        # for a wrist-cam-only transfer policy — kept in the dataset for a future
-        # cube-position/velocity predictor, place verification, and visualisation.
+        # Recording-only privileged external view (defined in scene_cube.xml, was
+        # box_top). Not for a wrist-cam-only transfer policy — kept in the dataset
+        # for a future cube-position/velocity predictor and place verification.
         "overview": SimCameraConfig(mujoco_name="overview", width=320, height=240),
-        "belt_top": SimCameraConfig(mujoco_name="belt_top", width=320, height=240),
-        "box_top": SimCameraConfig(mujoco_name="box_top", width=320, height=240),
-        "front_high": SimCameraConfig(mujoco_name="front_high", width=320, height=240),
-        "corner": SimCameraConfig(mujoco_name="corner", width=320, height=240),
     }
     config = SimSO101Config(
         mjcf_path=str(mjcf_path),

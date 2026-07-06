@@ -917,14 +917,21 @@ def sim_eval(
         help="MuJoCo scene XML. Must include the success-check body (default scene has 'cube').",
     ),
     episodes: int = typer.Option(10, "--episodes", help="Number of episodes to run."),
-    episode_time: float = typer.Option(30, "--episode-time", help="Max wall-clock seconds per episode."),
+    episode_time: float = typer.Option(
+        100000,
+        "--episode-time",
+        help="Wall-clock seconds cap per episode — a safety backstop, not the primary bound. It "
+        "defaults high so it does NOT prematurely cut an episode: since it's wall-clock (not sim "
+        "time), slow render/inference otherwise ends the episode in a fraction of a sim-second. "
+        "Episodes normally end on --end-on-drop (cube leaves the belt) or --episode-steps.",
+    ),
     episode_steps: int = typer.Option(
-        None,
+        1000,
         "--episode-steps",
-        help="Max control steps per episode, in addition to --episode-time (whichever hits first "
-        "ends the episode). --episode-time alone is wall-clock, not sim time, so the actual step "
-        "count it produces varies with render/inference speed — set this for a reproducible step "
-        "count (e.g. 600 for ~20s of sim time at --fps 30).",
+        help="Max control steps (sim-time bound, reproducible) per episode — the backstop that "
+        "caps the rollout if the cube never leaves the belt (e.g. static belt, idle policy). On a "
+        "moving belt --end-on-drop usually ends it much sooner (the cube falls off the far end). "
+        "1000 ≈ 33s of sim time at --fps 30. Set 0 to disable.",
     ),
     reset_time: float = typer.Option(3, "--reset-time", help="Seconds held between episodes."),
     belt_speed: float = typer.Option(
@@ -941,6 +948,14 @@ def sim_eval(
         "the arm's ~0.40m reach; the start pose is tuned for the default, so large changes may "
         "not frame the cube in the wrist camera.",
     ),
+    end_on_drop: bool = typer.Option(
+        True,
+        "--end-on-drop/--no-end-on-drop",
+        help="End each episode as soon as the cube leaves the belt (settles below belt height: fell "
+        "off the far end, or was placed into the box). For the conveyor task the episode only "
+        "matters while the cube is on the belt, so this bounds the rollout by that instead of a "
+        "fixed horizon (--episode-steps / --episode-time still cap it as a backstop). Default on.",
+    ),
     success_body: str = typer.Option(
         "cube", "--success-body", help="MJCF body to track for success (must have a freejoint)."
     ),
@@ -955,6 +970,30 @@ def sim_eval(
         "--success-height",
         help="'lift' only: meters the body must rise above its resting height to count as lifted.",
     ),
+    policy_camera: str = typer.Option(
+        "overview",
+        "--policy-camera",
+        help="MuJoCo camera fed to the policy as observation.images.camera1 — must match the camera "
+        "the policy was TRAINED on. Defaults to overview (the current single-camera setup, formerly "
+        "named box_top); override for a policy trained on a different view, e.g. --policy-camera wrist_cam.",
+    ),
+    record_cameras: str = typer.Option(
+        "",
+        "--record-cameras",
+        help="Comma-separated EXTRA MuJoCo cameras to ALSO render into the --repo-id dataset (not fed "
+        "to the policy), e.g. wrist_cam. Empty by default: only the --policy-camera is rendered (as "
+        "camera1) — every extra camera is another CPU (osmesa) render per control step, so keep this "
+        "minimal for speed. Duplicates of the policy camera are dropped. Only matters with --repo-id.",
+    ),
+    stream_video: bool = typer.Option(
+        False,
+        "--stream-video/--no-stream-video",
+        help="Encode the --repo-id videos in real time during the rollout (streaming_encoding) "
+        "instead of writing per-frame PNGs first and batch-encoding at episode end (skips the "
+        "intermediate images/ dir). Default OFF: lerobot's streaming path doesn't emit per-episode "
+        "image stats, so a multi-episode dataset crashes at finalize (metadata buffer length "
+        "mismatch). Safe for single-episode runs; leave off for multi-episode.",
+    ),
     fps: int = typer.Option(30, "--fps"),
     output: str = typer.Option(
         None,
@@ -967,6 +1006,21 @@ def sim_eval(
     ),
     execution_horizon: int = typer.Option(10, "--execution-horizon", help="RTC only: see `eval --help`."),
     queue_threshold: int = typer.Option(30, "--queue-threshold", help="RTC only: see `eval --help`."),
+    predict_cube: bool = typer.Option(
+        False,
+        "--predict-cube/--no-predict-cube",
+        help="Enable the overhead cube predictor (Tier 3): the red cube is advanced forward on "
+        "--predictor-camera before the frame is fed to the policy. With --rtc this compensates for "
+        "inference latency (the PE gap, as on real hardware — see `eval --help`); without --rtc, sync "
+        "has no such latency but still executes a chunk open-loop for n_action_steps ticks, so this "
+        "instead compensates for cube drift over that window (half the chunk's duration).",
+    ),
+    predictor_camera: str = typer.Option(
+        None,
+        "--predictor-camera",
+        help="Dataset-facing camera key the cube predictor watches (defaults to camera1, the "
+        "--policy-camera view). Must be camera1 or one of --record-cameras.",
+    ),
     repo_id: str = typer.Option(
         None,
         "--repo-id",
@@ -992,6 +1046,13 @@ def sim_eval(
     No recording happens unless `--repo-id` is given — by default this only
     measures success rate / success step, exactly like the rest of `eval`'s
     docs above describe.
+
+    Add --predict-cube to advance the tracked cube forward on --predictor-camera
+    before feeding the frame to the policy — the Tier 3 predictor. Works with or
+    without --rtc: with --rtc it compensates for inference latency (same
+    mechanism as `eval --predict-cube` on real hardware); without --rtc it
+    compensates for chunk-execution drift instead (see
+    lerobot.rollout.inference.sync.SyncInferenceEngine). See docs/latency-experiments.md.
     """
     # Headless offscreen rendering by default — without it MuJoCo falls back to a
     # windowed GLFW context and crashes on HPC nodes with no DISPLAY. osmesa (CPU
@@ -1023,29 +1084,34 @@ def sim_eval(
             f"--dataset.repo_id={repo}",
             f"--dataset.fps={fps}",
             f"--dataset.push_to_hub={'true' if push else 'false'}",
+            f"--dataset.streaming_encoding={'true' if stream_video else 'false'}",
         ]
         typer.secho(f"(recording episodes to {repo})", fg="yellow")
 
+    # camera1 = --policy-camera: the view fed to the policy, which must match what
+    # it was trained on (default overview = the external top-down view; use
+    # wrist_cam for a policy trained on the eye-in-hand view instead). Any
+    # --record-cameras are extra
+    # fixed views rendered into the dataset only (not consumed by the policy). The
+    # rollout context rejects a robot camera the policy doesn't expect unless it's
+    # in --rename_map (a no-op identity entry there takes the skip-check branch).
+    extra_cams = list(
+        dict.fromkeys(
+            c.strip() for c in record_cameras.split(",") if c.strip() and c.strip() != policy_camera
+        )
+    )
+    cam_entries = [f"camera1: {{mujoco_name: {policy_camera}, width: 320, height: 240}}"]
+    cam_entries += [f"{c}: {{mujoco_name: {c}, width: 320, height: 240}}" for c in extra_cams]
     cmd = [
         "lerobot-rollout",
         f"--policy.path={_resolve_policy(policy)}",
         "--robot.type=sim_so101",
         f"--robot.mjcf_path={Path(mjcf_path).resolve()}",
-        # camera1=wrist_cam: the real SO-101 rig's only camera is wrist-mounted
-        # (eye-in-hand); wrist_cam is the Menagerie so101.xml's built-in camera
-        # at that same CAD-derived mount, so that's the policy's only input
-        # camera too. overview: fixed external view (added in scene_cameras.xml,
-        # not part of upstream so101.xml), not consumed by this policy but
-        # recorded into the dataset (with --repo-id) for a future cube-position/
-        # velocity predictor. The rollout context rejects any robot camera the
-        # policy doesn't expect unless --rename_map is set (it skips that check
-        # entirely) — the no-op entry below exists only to take that branch.
-        "--robot.cameras={camera1: {mujoco_name: wrist_cam, width: 320, height: 240}, "
-        "overview: {mujoco_name: overview, width: 320, height: 240}}",
-        '--rename_map={"observation.images.overview": "observation.images.overview"}',
+        "--robot.cameras={" + ", ".join(cam_entries) + "}",
         f"--robot.control_fps={fps}",
         f"--robot.belt_speed={belt_speed}",
         f"--robot.belt_distance={belt_distance}",
+        f"--robot.end_on_drop={'true' if end_on_drop else 'false'}",
         f"--robot.success.body_name={success_body}",
         f"--robot.success.criterion={success_criterion}",
         f"--robot.success.height_m={success_height}",
@@ -1059,7 +1125,14 @@ def sim_eval(
         "--play_sounds=false",
         *dataset_args,
     ]
-    if episode_steps is not None:
+    # Only pass --rename_map when there are extra (non-policy) cameras to declare;
+    # a no-op identity entry per extra camera takes the rollout's skip-check branch
+    # so those recording-only views aren't rejected. With no extras the policy sees
+    # exactly camera1, so the default camera check passes and no rename_map is needed.
+    if extra_cams:
+        rename_entries = ", ".join(f'"observation.images.{c}": "observation.images.{c}"' for c in extra_cams)
+        cmd.append("--rename_map={" + rename_entries + "}")
+    if episode_steps:  # 0/None disables the step cap
         cmd.append(f"--strategy.episode_steps={episode_steps}")
     if rtc:
         cmd += [
@@ -1071,8 +1144,41 @@ def sim_eval(
         ]
     else:
         cmd.append("--inference.type=sync")
+    if predict_cube:
+        cam_key = predictor_camera or "camera1"
+        valid_keys = {"camera1", *extra_cams}
+        if cam_key not in valid_keys:
+            raise typer.BadParameter(
+                f"--predictor-camera '{cam_key}' must be one of {sorted(valid_keys)} "
+                "(camera1, or one of --record-cameras)."
+            )
+        # Both sync and rtc inference configs expose --inference.predictor.* (same
+        # PredictorConfig shape), so this works regardless of --rtc. With --rtc the
+        # predictor compensates for inference latency (the real-hardware behavior);
+        # without it, sync has no such latency but still executes a chunk open-loop
+        # for n_action_steps ticks, so the predictor instead compensates for drift
+        # over that window (see lerobot.rollout.inference.sync.SyncInferenceEngine).
+        cmd += [
+            "--inference.predictor.enabled=true",
+            f"--inference.predictor.camera={cam_key}",
+        ]
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
-    _run(cmd + list(ctx.args))
+    try:
+        _run(cmd + list(ctx.args))
+    finally:
+        # Co-locate the eval result with the recorded rollout so the metrics live
+        # next to the videos/frames. In `finally` because _run() always raises
+        # typer.Exit(rc) (so code after it never runs). The rollout stamps the repo
+        # id with a timestamp, so copy the summary into the newest matching dataset
+        # dir as `eval_summary.json`. Best-effort — never mask the real exit.
+        if repo_id and Path(out_path).exists():
+            base = _dataset_root(repo)
+            stamped = sorted(base.parent.glob(f"{base.name}_*"), key=lambda p: p.stat().st_mtime)
+            dest_dir = stamped[-1] if stamped else (base if base.exists() else None)
+            if dest_dir is not None:
+                with suppress(Exception):
+                    shutil.copy(out_path, dest_dir / "eval_summary.json")
+                    typer.secho(f"(eval summary → {dest_dir / 'eval_summary.json'})", fg="green")
 
 
 # Function name is distinct from the imported `sim_collect` module (the CLI name
@@ -1133,6 +1239,14 @@ def sim_collect_cmd(
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Delete an existing local dataset with this id first."
     ),
+    wait_steps: int = typer.Option(
+        None,
+        "--wait-steps",
+        help="Max control steps the approach phase hovers waiting for the cube before giving up "
+        "(GraspConfig default 240 ≈ 8s). Very slow belts need the cube longer to arrive — e.g. "
+        "0.01 m/s needs ~650 steps total, so this must be raised (~700) or the expert gives up before "
+        "the cube shows up and every episode misses. Defaults are fine for belt_speed >= ~0.015.",
+    ),
 ) -> None:
     """Record scripted-expert pick-and-place demos in the MuJoCo sim (no hardware).
 
@@ -1164,6 +1278,7 @@ def sim_collect_cmd(
     if belt_speed_max is not None and belt_speed_max > belt_speed:
         typer.secho(f"(belt speed varies per episode in [{belt_speed}, {belt_speed_max}] m/s)", fg="yellow")
     typer.secho(f"(recording {episodes} scripted episodes to {repo})", fg="yellow")
+    grasp = sim_collect.GraspConfig(wait_steps=wait_steps) if wait_steps is not None else None
     summary = sim_collect.collect(
         repo_id=repo,
         task=task,
@@ -1177,6 +1292,7 @@ def sim_collect_cmd(
         jitter_xy=jitter,
         seed=seed,
         push=push,
+        grasp=grasp,
     )
     typer.secho(
         f"recorded {summary['episodes']} episodes, "
@@ -1364,6 +1480,78 @@ def upload(
             f"Upload failed ({type(exc).__name__}: {exc}). Are you logged in? Run: pixi run hf-login"
         ) from None
     typer.secho(f"Uploaded → https://huggingface.co/datasets/{repo}", fg="green")
+
+
+@app.command("merge-rollouts")
+def merge_rollouts(
+    prefix: str = typer.Option(
+        None,
+        "--prefix",
+        help="Merge every local dataset under $HF_LEROBOT_HOME/<any namespace>/ whose name starts with "
+        "this prefix, using ALL of each one's episodes (e.g. --prefix rollout_check_ merges "
+        "rollout_check_003, rollout_check_005, ...). Order is by directory mtime. Mutually exclusive "
+        "with --repo-ids.",
+    ),
+    repo_ids: str = typer.Option(
+        None,
+        "--repo-ids",
+        help="Comma-separated dataset ids to merge, each optionally capped with ':N' to use only its "
+        "first N episodes (omit for all), e.g. --repo-ids "
+        "sim_pickplace_speed001:40,sim_pickplace_speed010:10 — lets you collect one fixed pool per "
+        "speed ONCE and then compose different low/high-speed-weighted training mixes from the same "
+        "pools without re-collecting, just by changing the counts here. Mutually exclusive with --prefix.",
+    ),
+    output_repo_id: str = typer.Option(
+        ..., "--output-repo-id", help="Name for the merged dataset ('name' → prefixed with your HF user)."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Delete an existing local dataset with the output id first."
+    ),
+) -> None:
+    """Merge rollouts/collections recorded under separate --repo-id runs (e.g. one per belt speed)
+    into a single dataset, so `pixi run viz` / training can look at them together as one set of
+    episodes instead of scattered directories. Uses lerobot's merge_datasets (physically concatenates
+    the parquet/video files; episode indices are renumbered).
+    """
+    from lerobot.datasets.dataset_tools import merge_datasets
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+
+    if (prefix is None) == (repo_ids is None):
+        raise typer.BadParameter("Pass exactly one of --prefix or --repo-ids.")
+
+    root = Path(HF_LEROBOT_HOME)
+    datasets = []
+    if prefix is not None:
+        matches = sorted(
+            (p for p in root.glob(f"*/{prefix}*") if p.is_dir() and (p / "meta" / "info.json").exists()),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if not matches:
+            raise typer.BadParameter(f"No local datasets under {root}/*/ match prefix '{prefix}'.")
+        for p in matches:
+            typer.secho(f"  {p.relative_to(root)} (all episodes)", fg="blue")
+            datasets.append(LeRobotDataset(repo_id=f"{p.parent.name}/{p.name}", root=p))
+    else:
+        for entry in repo_ids.split(","):
+            entry = entry.strip()
+            name, _, cap = entry.partition(":")
+            repo = _resolve_repo(name.strip())
+            root_dir = _dataset_root(repo)
+            if not root_dir.exists():
+                raise typer.BadParameter(f"No local dataset at {root_dir} (from '{entry}').")
+            episodes = list(range(int(cap))) if cap else None
+            typer.secho(f"  {repo} ({cap or 'all'} episodes)", fg="blue")
+            datasets.append(LeRobotDataset(repo_id=repo, root=root_dir, episodes=episodes))
+
+    typer.secho(f"Merging {len(datasets)} dataset(s)...", fg="blue")
+    out_repo = _resolve_repo(output_repo_id, for_creation=True)
+    _maybe_overwrite(out_repo, overwrite)
+    merge_datasets(datasets, output_repo_id=out_repo, output_dir=_dataset_root(out_repo))
+    typer.secho(
+        f"Merged → {_dataset_root(out_repo)} ({sum(d.num_episodes for d in datasets)} episodes total)",
+        fg="green",
+    )
 
 
 @app.command("push-policy")
