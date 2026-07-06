@@ -1009,9 +1009,11 @@ def sim_eval(
     predict_cube: bool = typer.Option(
         False,
         "--predict-cube/--no-predict-cube",
-        help="RTC only: enable the overhead cube predictor (Tier 3). The red cube is advanced forward "
-        "by the inference latency (PE gap) on --predictor-camera and the time-advanced frame is fed "
-        "to the policy. See `eval --help` for the real-hardware equivalent.",
+        help="Enable the overhead cube predictor (Tier 3): the red cube is advanced forward on "
+        "--predictor-camera before the frame is fed to the policy. With --rtc this compensates for "
+        "inference latency (the PE gap, as on real hardware — see `eval --help`); without --rtc, sync "
+        "has no such latency but still executes a chunk open-loop for n_action_steps ticks, so this "
+        "instead compensates for cube drift over that window (half the chunk's duration).",
     ),
     predictor_camera: str = typer.Option(
         None,
@@ -1045,10 +1047,12 @@ def sim_eval(
     measures success rate / success step, exactly like the rest of `eval`'s
     docs above describe.
 
-    Add --predict-cube (needs --rtc) to advance the tracked cube forward by
-    the inference latency on --predictor-camera before feeding the frame to
-    the policy — the Tier 3 predictor, same mechanism as `eval --predict-cube`
-    on real hardware. See docs/latency-experiments.md.
+    Add --predict-cube to advance the tracked cube forward on --predictor-camera
+    before feeding the frame to the policy — the Tier 3 predictor. Works with or
+    without --rtc: with --rtc it compensates for inference latency (same
+    mechanism as `eval --predict-cube` on real hardware); without --rtc it
+    compensates for chunk-execution drift instead (see
+    lerobot.rollout.inference.sync.SyncInferenceEngine). See docs/latency-experiments.md.
     """
     # Headless offscreen rendering by default — without it MuJoCo falls back to a
     # windowed GLFW context and crashes on HPC nodes with no DISPLAY. osmesa (CPU
@@ -1141,8 +1145,6 @@ def sim_eval(
     else:
         cmd.append("--inference.type=sync")
     if predict_cube:
-        if not rtc:
-            raise typer.BadParameter("--predict-cube requires --rtc (the predictor feeds the RTC engine).")
         cam_key = predictor_camera or "camera1"
         valid_keys = {"camera1", *extra_cams}
         if cam_key not in valid_keys:
@@ -1150,8 +1152,12 @@ def sim_eval(
                 f"--predictor-camera '{cam_key}' must be one of {sorted(valid_keys)} "
                 "(camera1, or one of --record-cameras)."
             )
-        # Predictor advances the cube by the inference latency (see lerobot.predictors /
-        # docs/overhead-predictor.md) — same mechanism as the real-hardware `eval --predict-cube`.
+        # Both sync and rtc inference configs expose --inference.predictor.* (same
+        # PredictorConfig shape), so this works regardless of --rtc. With --rtc the
+        # predictor compensates for inference latency (the real-hardware behavior);
+        # without it, sync has no such latency but still executes a chunk open-loop
+        # for n_action_steps ticks, so the predictor instead compensates for drift
+        # over that window (see lerobot.rollout.inference.sync.SyncInferenceEngine).
         cmd += [
             "--inference.predictor.enabled=true",
             f"--inference.predictor.camera={cam_key}",
