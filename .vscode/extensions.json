@@ -1,6 +1,8 @@
 {
     "recommendations": [
         "charliermarsh.ruff",
-        "GitHub.vscode-pull-request-github"
+        "GitHub.vscode-pull-request-github",
+        "anthropic.claude-code",
+        "ms-python.python"
     ]
 }
