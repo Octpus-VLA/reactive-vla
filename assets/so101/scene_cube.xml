@@ -11,10 +11,15 @@
   <include file="scene_cameras.xml"/>
 
   <asset>
-    <material name="belt_surface_mat" rgba="0.094 0.451 0.184 1" reflectance="0.05" shininess="0.2"/>
+    <!-- belt_surface_mat: 実機コンベアの実写(datasets/OctpusVLA/real/lift_red_cube_static_ep50 の
+         overall カメラ)からピクセルサンプリングした深緑（反射ハイライト・cube・アルミレールを
+         避けた区画の平均 RGB(3,118,81)/255 を正規化）。旧値は黄緑寄りで実機より明るかった。 -->
+    <material name="belt_surface_mat" rgba="0.012 0.463 0.318 1" reflectance="0.05" shininess="0.2"/>
     <material name="belt_alu_mat" rgba="0.78 0.80 0.83 1" reflectance="0.5" shininess="0.7"/>
     <material name="belt_dark_mat" rgba="0.13 0.13 0.15 1" reflectance="0.2"/>
-    <material name="box_white_mat" rgba="0.90 0.90 0.92 1" reflectance="0.1"/>
+    <!-- box_dark_mat（旧 box_white_mat）: 実機の置き場所用の箱は黒いプラスチック製（ユーザー確認済み、
+         正確なピクセル値は未サンプリング）。旧値はほぼ白で実機と大きく乖離していた。 -->
+    <material name="box_dark_mat" rgba="0.05 0.05 0.06 1" reflectance="0.1"/>
   </asset>
 
   <worldbody>
@@ -47,20 +52,20 @@
             solref="0.01 1" mass="0.5"/>
     </body>
 
-    <!-- White open-top box for placing picked cubes, just beyond the belt's far edge,
+    <!-- Black open-top box for placing picked cubes, just beyond the belt's far edge,
          centered in front of the robot (y=0) at x=0.30 (within reach). Static (no joint).
          Inner cavity ~0.06 x 0.06, walls ~0.044 tall. -->
     <body name="box" pos="0.30 0 0">
       <geom name="box_floor" type="box" pos="0 0 0.004" size="0.04 0.04 0.004"
-            material="box_white_mat"/>
+            material="box_dark_mat"/>
       <geom name="box_wall_near" type="box" pos="-0.038 0 0.024" size="0.004 0.04 0.02"
-            material="box_white_mat"/>
+            material="box_dark_mat"/>
       <geom name="box_wall_far" type="box" pos="0.038 0 0.024" size="0.004 0.04 0.02"
-            material="box_white_mat"/>
+            material="box_dark_mat"/>
       <geom name="box_wall_left" type="box" pos="0 -0.038 0.024" size="0.04 0.004 0.02"
-            material="box_white_mat"/>
+            material="box_dark_mat"/>
       <geom name="box_wall_right" type="box" pos="0 0.038 0.024" size="0.04 0.004 0.02"
-            material="box_white_mat"/>
+            material="box_dark_mat"/>
     </body>
 
     <!-- Cube rides the belt top (z=0.04) starting at the -y end, carried toward +y
@@ -70,6 +75,29 @@
       <geom name="cube" type="box" size="0.015 0.015 0.015"
             rgba="0.9 0.2 0.2 1" mass="0.02"
             friction="1.0 0.05 0.001"/>
+    </body>
+
+    <!-- Domain-randomization distractors: purely visual clutter for sim2real background
+         robustness (cli/sim_collect.py randomizes pos/size/rgba per episode when enabled,
+         off by default). mocap bodies so their pose is settable via data.mocap_pos without
+         a joint/physics step; contype/conaffinity 0 so they never collide with the arm,
+         cube, or belt. Parked far below the floor here — the per-episode randomizer moves
+         them into view (or leaves them parked, for a "no distractor" episode). -->
+    <body name="distractor0" pos="0 0 -1" mocap="true">
+      <geom name="distractor0_geom" type="box" size="0.02 0.02 0.02" rgba="0.5 0.5 0.5 1"
+            contype="0" conaffinity="0"/>
+    </body>
+    <body name="distractor1" pos="0 0 -1" mocap="true">
+      <geom name="distractor1_geom" type="box" size="0.02 0.02 0.02" rgba="0.5 0.5 0.5 1"
+            contype="0" conaffinity="0"/>
+    </body>
+    <body name="distractor2" pos="0 0 -1" mocap="true">
+      <geom name="distractor2_geom" type="box" size="0.02 0.02 0.02" rgba="0.5 0.5 0.5 1"
+            contype="0" conaffinity="0"/>
+    </body>
+    <body name="distractor3" pos="0 0 -1" mocap="true">
+      <geom name="distractor3_geom" type="box" size="0.02 0.02 0.02" rgba="0.5 0.5 0.5 1"
+            contype="0" conaffinity="0"/>
     </body>
 
     <!-- Recording-only privileged external view (was named box_top; renamed overview

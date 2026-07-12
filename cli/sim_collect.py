@@ -50,6 +50,98 @@ GRIPPER = "gripper"
 # in so101.xml on the gripper body.
 TCP_SITE = "gripperframe"
 CUBE_JOINT = "cube_free"
+# scene_cube.xml distractor mocap bodies (see the file for why mocap: settable pose,
+# no physics/collision). Order doesn't matter; count must match the XML.
+DISTRACTOR_GEOMS = ["distractor0_geom", "distractor1_geom", "distractor2_geom", "distractor3_geom"]
+FLOOR_MATERIAL = "groundplane"
+
+
+@dataclass
+class DomainRandomizationConfig:
+    """Per-episode visual randomization for sim2real robustness (floor tint, light,
+    background distractors). Baked into the rendered video at collection time — unlike
+    online RL domain randomization, there is no re-rendering at train time, so the
+    diversity a trained policy ever sees is capped by how many *episodes* used a
+    distinct draw, not by any parameter range alone. Off by default (`enabled=False`)
+    so existing collection recipes are unaffected unless explicitly turned on.
+    """
+
+    enabled: bool = False
+    # Floor tint: material rgba is resampled per episode within [lo, hi] per channel
+    # (alpha left at 1). Multiplies the groundplane checker texture rather than
+    # replacing it, so the checker pattern itself still reads, just recoloured.
+    floor_rgb_lo: tuple[float, float, float] = (0.05, 0.05, 0.05)
+    floor_rgb_hi: tuple[float, float, float] = (0.9, 0.9, 0.9)
+    # Light: scene.xml defines exactly one directional light (index 0, unnamed —
+    # upstream Menagerie file, kept unedited). Position/diffuse resampled per episode;
+    # direction stays pointing generally down (randomized within a cone) so the scene
+    # doesn't go unlit.
+    light_pos_xy_range: float = 1.5  # metres, uniform in [-range, range] for x and y
+    light_height_lo: float = 2.5
+    light_height_hi: float = 4.5
+    light_diffuse_lo: float = 0.35
+    light_diffuse_hi: float = 0.85
+    light_tilt_max_deg: float = 25.0  # max deviation from straight-down
+    # Distractors: up to len(DISTRACTOR_GEOMS) simple boxes scattered around the
+    # periphery (outside the robot/belt/box working area) as generic background
+    # clutter — not modelling any specific real object, just "stuff a vision model
+    # must learn to ignore". `spawn_prob` per distractor per episode; the rest stay
+    # parked out of view (see scene_cube.xml), giving a spread of 0..N visible.
+    spawn_prob: float = 0.6
+    distractor_xy_range: float = 0.45  # metres from robot base, excluding the keepout
+    distractor_keepout_radius: float = 0.22  # metres from base; nothing spawns closer
+    distractor_size_lo: float = 0.01
+    distractor_size_hi: float = 0.035
+    distractor_height_lo: float = 0.02
+    distractor_height_hi: float = 0.12
+
+
+def randomize_background(sim: "_Sim", rng: np.random.Generator, cfg: DomainRandomizationConfig) -> None:
+    """Resample floor tint, light pose/intensity, and distractor placement for one
+    episode. Pure visual state (materials, mocap poses, light fields) — never touches
+    the robot, cube, or belt, so it has no effect on the expert's grasp logic. All the
+    written arrays are read live by the renderer; no recompilation needed."""
+    if not cfg.enabled:
+        return
+    mj = sim._mj
+    model = sim.model
+
+    floor_mat = mj.mj_name2id(model, mj.mjtObj.mjOBJ_MATERIAL, FLOOR_MATERIAL)
+    if floor_mat >= 0:
+        rgb = rng.uniform(cfg.floor_rgb_lo, cfg.floor_rgb_hi)
+        model.mat_rgba[floor_mat] = [*rgb, 1.0]
+
+    if model.nlight > 0:
+        x, y = rng.uniform(-cfg.light_pos_xy_range, cfg.light_pos_xy_range, size=2)
+        z = rng.uniform(cfg.light_height_lo, cfg.light_height_hi)
+        model.light_pos[0] = [x, y, z]
+        tilt = np.deg2rad(rng.uniform(0, cfg.light_tilt_max_deg))
+        az = rng.uniform(0, 2 * np.pi)
+        dir_xy = np.sin(tilt) * np.array([np.cos(az), np.sin(az)])
+        model.light_dir[0] = [dir_xy[0], dir_xy[1], -np.cos(tilt)]
+        d = rng.uniform(cfg.light_diffuse_lo, cfg.light_diffuse_hi)
+        model.light_diffuse[0] = [d, d, d]
+
+    for geom_name in DISTRACTOR_GEOMS:
+        gid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, geom_name)
+        body_id = model.geom_bodyid[gid]
+        mocap_id = model.body_mocapid[body_id]
+        if mocap_id < 0:
+            continue
+        if rng.uniform() >= cfg.spawn_prob:
+            sim.data.mocap_pos[mocap_id] = [0.0, 0.0, -1.0]  # parked out of view
+            continue
+        # Reject-sample xy outside the keepout disc so distractors never overlap the
+        # robot/belt/box working area.
+        for _ in range(20):
+            xy = rng.uniform(-cfg.distractor_xy_range, cfg.distractor_xy_range, size=2)
+            if np.linalg.norm(xy) >= cfg.distractor_keepout_radius:
+                break
+        z = rng.uniform(cfg.distractor_height_lo, cfg.distractor_height_hi)
+        sim.data.mocap_pos[mocap_id] = [xy[0], xy[1], z]
+        size = rng.uniform(cfg.distractor_size_lo, cfg.distractor_size_hi, size=3)
+        model.geom_size[gid] = size
+        model.geom_rgba[gid] = [*rng.uniform(0.05, 0.95, size=3), 1.0]
 
 
 @dataclass
@@ -80,33 +172,52 @@ class GraspConfig:
     # jaws to close/open, short enough that a moving cube doesn't slide out before
     # the jaws clamp it.
     grip_steps: int = 12
-    # Max steps the approach phase will hover waiting for a moving cube to enter
-    # reach before giving up (a passed/unreachable cube → the episode is a miss).
+    # Max steps the wait phase will sit at the gate waiting for a moving cube to
+    # arrive before giving up (a passed/unreachable cube → the episode is a miss).
     wait_steps: int = 240
     # TCP-to-target distance (m) that counts as "arrived" for a held move phase.
     reach_tol: float = 0.012
-    # Horizontal TCP-to-cube distance (m) at which the hovering approach commits to
-    # descending (the gripper is over the cube).
+    # Horizontal TCP-to-target distance (m) at which the hovering approach commits
+    # to descending (the gripper is over the cube / the gate spot).
     align_tol: float = 0.02
-    # 3-D TCP-to-cube distance (m) at which the descent commits to grasping.
-    grasp_tol: float = 0.02
-    # Descend/grasp clamp the tracked cube y to ±this (m) so the arm never chases a
-    # cube past its workspace; it grasps within reach even at high belt speed.
-    reach_window_y: float = 0.12
-    # Small lead (s) added to the tracked cube xy so the servo, which lags a moving
-    # target, aims slightly ahead and closes the gap. ×belt_speed → metres of lead.
-    track_lead_s: float = 0.12
     # Where on the belt (world y, m) the arm waits to grasp a moving cube — the
     # home-pose "sweet spot" in front of the robot. Grasping here (rather than at
     # the edge of reach the instant the cube enters) gives a consistent, strong
     # top-down grip at every belt speed; a grip at full -y extension slips on lift,
     # which is why low belt speeds used to fail. Ignored for a static cube.
     grasp_y: float = 0.0
-    # Lead (s) before the cube reaches grasp_y at which the arm starts descending,
-    # so the jaws close around it near the sweet spot rather than behind it.
-    # ×belt_speed → metres. Closure tracks the live cube, so this only needs to be
-    # roughly the descend+close duration.
-    descend_lead_s: float = 0.45
+    # Extra TCP height (m) above the grasp height at which the open jaws hover
+    # while waiting for the cube: high enough that both jaw tips clear the cube's
+    # top face (so the fingers never block the belt path), low enough that the
+    # final drop into the grasp finishes before the closing jaws reach cube width.
+    hover_clearance: float = 0.035
+    # The jaws are asymmetric around the TCP (measured at the grasp pose,
+    # wrist_roll=+90°): the *fixed* finger tip sits ~2.0 cm upstream of the TCP
+    # and low (its shaft rides below cube-top height at grasp z), while the
+    # *moving* finger sits ~7.5 cm downstream and ~3.7 cm higher — high enough to
+    # clear the cube's top until the closure swings it down. The only thing that
+    # can collide with the approaching cube is therefore the fixed finger, so the
+    # drop goes *straight down* at the sweet spot (never tracking backwards into
+    # the cube) and is timed by land_at_y/drop_time_s so the fixed finger reaches
+    # cube height just after the cube's trailing face has cleared its plane. The
+    # jaws then close immediately: the moving jaw sweeps in over the cube's top,
+    # catches its leading face and presses it back against the fixed-finger
+    # anvil, exactly like the (always-clean) static grasp.
+    #
+    # Drop trigger: start the straight-down drop when the cube's centre passes
+    # grasp_y + land_at_y − belt_speed × drop_time_s. Both constants were fitted
+    # empirically (grid search over the trigger offset at belt speeds 0.03-0.14,
+    # 3 episodes each, scoring success + cube rotation): the optimum sits at
+    # +0.000 m for 0.03 m/s drifting to −0.010 m at 0.14 m/s — i.e. nearly
+    # speed-independent, because the descending fixed jaw clears the cube's top
+    # early in the drop while the closure (which starts on landing) needs the
+    # cube almost at the sweet spot already. Triggering ≥1 cm earlier lands the
+    # fixed jaw's shaft on the cube's top face and rolls it (~110-180°);
+    # triggering ≥1 cm later lets the cube slip past before the pinch closes
+    # (misses at ≥0.10 m/s). The fitted line keeps 5-15° of cube rotation and a
+    # full grasp across the whole 0.03-0.14 m/s range.
+    land_at_y: float = 0.003
+    drop_time_s: float = 0.09
 
 
 @dataclass
@@ -136,6 +247,19 @@ class IKConfig:
     # 0.008 fixed both (verified: monotonic x-reach boundary restored, no more
     # mid-transition drops) at the cost of slightly slower phase transitions.
     max_tcp_step: float = 0.008
+    # Separate (higher) TCP step cap used only while the jaws are still open and
+    # empty (approach/descend/wait/drop/grasp — see PickPlaceExpert._TRACKING_PHASES):
+    # nothing is held yet, so there is no flinging risk, but the *drop* phase's
+    # vertical descent must complete before the belt carries the cube past the
+    # trigger point. At the default 0.008 (≈0.24 m/s max TCP speed) the descent
+    # itself takes long enough that belt_speed ≳ 0.18 m/s carries the cube past
+    # the gate before the fixed finger lands, regardless of drop-trigger timing —
+    # confirmed by sweeping the trigger offset at 0.18-0.40 m/s and finding no
+    # offset that recovers a clean grasp. 0.02 (≈0.6 m/s) fixes that without
+    # touching the held-phase cap (verified: low/mid/high-speed episodes,
+    # collected before this field existed, are unaffected since it only applies
+    # pre-grasp).
+    max_tcp_step_pregrasp: float = 0.02
 
 
 class _Sim:
@@ -226,18 +350,28 @@ def solve_ik(sim: _Sim, target_pos: np.ndarray, q_seed: np.ndarray, cfg: IKConfi
 
 
 class PickPlaceExpert:
-    """Privileged scripted state machine: approach → grasp → lift → place → release.
+    """Privileged scripted state machine: approach → descend → wait → drop →
+    grasp → lift → carry → place → release.
 
-    Produces one action dict per control step from the current sim state. Pre-grasp
-    phases reactively track the cube's *live* xy (clamped to the reachable window
-    and led slightly forward), so the gripper hovers over a cube on the belt, waits
-    for it to enter reach, follows it down, and closes around it while it is still
-    moving — handling any belt speed, including one that varies between episodes,
-    without per-speed tuning. Once grasped, the cube is held, so carry/place use a
-    fixed carry height and the box's static pose.
+    Produces one action dict per control step from the current sim state. The arm
+    hovers over the grasp sweet spot with the open jaws high enough that the
+    finger tips clear the cube's top face (so nothing blocks the belt path),
+    drops straight down at exactly the moment the cube's position calls for it —
+    timed so the low fixed finger reaches cube height just after the cube's
+    trailing face has cleared its plane (dropping any earlier lands that finger
+    on the cube and flips it) — and closes immediately: the moving jaw sweeps in
+    over the cube's top, catches its leading face and presses it back against
+    the fixed-finger anvil, the same pinch the (always-clean) static grasp ends
+    in. The drop timing scales with the live cube position and belt speed, so
+    any speed — including one that varies between episodes — works without
+    per-speed tuning. Once grasped, the cube is held, so carry/place use a fixed
+    carry height and the box's static pose.
     """
 
-    PHASES = ("approach", "descend", "grasp", "lift", "carry", "place", "release", "done")
+    PHASES = ("approach", "descend", "wait", "drop", "grasp", "lift", "carry", "place", "release", "done")
+    # Phases before the cube is held: safe to servo at ik.max_tcp_step_pregrasp
+    # (no held cube to fling). lift onward uses the lower ik.max_tcp_step.
+    _TRACKING_PHASES = ("approach", "descend", "wait", "drop", "grasp")
 
     def __init__(
         self,
@@ -280,36 +414,40 @@ class PickPlaceExpert:
         jjt = j @ j.T + (self.ik.damping**2) * np.eye(3)
         return j.T @ np.linalg.solve(jjt, err)
 
-    def _track_xy(self) -> np.ndarray:
-        """Pre-grasp aim point: the cube's *live* xy, led slightly forward to
-        offset the servo's lag on a moving target, with y clamped to the reachable
-        window so a cube still out at the feed end is hovered-for at the near edge
-        of reach rather than chased past the workspace. Reactive (uses the cube's
-        actual position every step) rather than a one-shot intercept, so it handles
-        any belt speed — including a speed that varies between episodes. Static belt
-        (speed 0) collapses to the cube's current xy."""
+    def _gate_xy(self) -> np.ndarray:
+        """Hover aim point: the cube's live x (jitter tracking), and — for a moving
+        belt — the fixed sweet-spot y where the arm waits for the belt to deliver
+        the cube. Static belt aims at the cube itself."""
         cube = self.sim.cube_pos()
-        lead_y = self.belt_speed * self.g.track_lead_s
-        y = np.clip(cube[1] + lead_y, -self.g.reach_window_y, self.g.reach_window_y)
+        y = cube[1] if self.belt_speed == 0.0 else self.g.grasp_y
         return np.array([cube[0], y])
 
+
     def _target_for_phase(self) -> tuple[np.ndarray, float]:
-        """Return (tcp_target_xyz, gripper_cmd) for the current phase. Approach,
-        descend and grasp track the live cube (so the gripper moves with a cube on
-        the belt while the jaws close); held phases use a fixed carry height."""
-        cube = self.sim.cube_pos()
+        """Return (tcp_target_xyz, gripper_cmd) for the current phase. Pre-grasp
+        phases aim at the gate spot (live cube x, fixed sweet-spot y); descend/wait
+        hold the jaw tips just above cube-top height, and grasp drops the rest of
+        the way while closing. Held phases use a fixed carry height."""
         if self.phase == "approach":
-            # Static: hover directly over the (fixed) cube. Moving: hover at the
-            # fixed sweet spot and let the belt bring the cube to it.
-            xy = self._track_xy() if self.belt_speed == 0.0 else np.array([cube[0], self.g.grasp_y])
+            xy = self._gate_xy()
             return np.array([xy[0], xy[1], self._rest_z + self.g.approach_height]), self.g.gripper_open
-        if self.phase == "descend":
-            xy = self._track_xy()
+        if self.phase in ("descend", "wait"):
+            # Hover with the finger tips clear of the cube's top so the open jaws
+            # never block the belt path while waiting for the cube.
+            xy = self._gate_xy()
+            z = self._rest_z + self.g.grasp_z_offset + (
+                self.g.hover_clearance if self.belt_speed != 0.0 else 0.0
+            )
+            return np.array([xy[0], xy[1], z]), self.g.gripper_open
+        if self.phase == "drop":
+            # Straight down at the sweet spot (tracking only cube x): the fixed
+            # finger lands just behind the cube's trailing face (see land_at_y).
+            xy = self._gate_xy()
             return np.array([xy[0], xy[1], self._rest_z + self.g.grasp_z_offset]), self.g.gripper_open
         if self.phase == "grasp":
-            # Keep tracking the (possibly still-moving) cube while the jaws close so
-            # the gripper closes *around* it instead of behind it.
-            xy = self._track_xy()
+            # Close in place: the moving jaw sweeps in over the cube's top and
+            # presses it back against the fixed-finger anvil.
+            xy = self._gate_xy()
             self._grasp_xy = xy
             return np.array([xy[0], xy[1], self._rest_z + self.g.grasp_z_offset]), self.g.gripper_closed
         carry_z = self._rest_z + self.g.approach_height
@@ -325,29 +463,33 @@ class PickPlaceExpert:
         return self.sim.tcp_pos(), self.g.gripper_open
 
     def _should_advance(self, target_xyz: np.ndarray) -> bool:
-        """Per-phase transition test. Pre-grasp phases are event-triggered off the
-        live cube (so the arm waits for a moving cube and commits only when it is
-        actually over / within reach of it); held phases advance on arrival or a
-        time budget; grasp/release settle on a short budget."""
+        """Per-phase transition test. Approach/descend advance on arrival (the
+        hovering jaw tips stay above cube-top height, so the arm can settle over
+        the spot early); wait is event-triggered off the live cube so the
+        drop+close meets it centred under the gripper; held phases advance on
+        arrival or a time budget; grasp/release settle on a short budget."""
         tcp = self.sim.tcp_pos()
         cube = self.sim.cube_pos()
         if self.phase == "approach":
-            if self.belt_speed == 0.0:
-                # Static: descend once the gripper is hovering over the cube.
-                horiz = float(np.linalg.norm(tcp[:2] - cube[:2]))
-                return horiz < self.g.align_tol or self._phase_step >= self.g.wait_steps
-            # Moving: start descending when the cube reaches the descend-start line
-            # `descend_lead_s` (in time) before the sweet spot, so closure — which
-            # tracks the live cube — lands near grasp_y. Also require the arm to be
-            # in place over the sweet spot first.
-            over_spot = (
-                float(np.linalg.norm(tcp[:2] - np.array([cube[0], self.g.grasp_y]))) < self.g.align_tol
-            )
-            cube_ready = cube[1] >= self.g.grasp_y - self.belt_speed * self.g.descend_lead_s
-            return (over_spot and cube_ready) or self._phase_step >= self.g.wait_steps
+            horiz = float(np.linalg.norm(tcp[:2] - target_xyz[:2]))
+            return horiz < self.g.align_tol or self._phase_step >= self.g.wait_steps
         if self.phase == "descend":
             return (
-                float(np.linalg.norm(tcp - cube)) < self.g.grasp_tol or self._phase_step >= self.g.phase_steps
+                float(np.linalg.norm(tcp - target_xyz)) < self.g.reach_tol
+                or self._phase_step >= self.g.phase_steps
+            )
+        if self.phase == "wait":
+            if self.belt_speed == 0.0:
+                return True  # static cube is already under the gripper — drop now
+            # Trigger the drop so the fixed finger reaches cube height just as
+            # the cube's trailing face clears its plane (see land_at_y).
+            drop_at = self.g.grasp_y + self.g.land_at_y - self.belt_speed * self.g.drop_time_s
+            return cube[1] >= drop_at or self._phase_step >= self.g.wait_steps
+        if self.phase == "drop":
+            # Land, then close immediately — every extra step lets the belt carry
+            # the cube further from the fixed-finger anvil before the pinch.
+            return abs(tcp[2] - target_xyz[2]) < self.g.reach_tol or (
+                self._phase_step >= self.g.phase_steps
             )
         if self.phase in ("grasp", "release"):
             return self._phase_step >= self.g.grip_steps
@@ -372,9 +514,15 @@ class PickPlaceExpert:
         the actuators' gravity droop until the actual TCP reaches the target."""
         target_xyz, grip = self._target_for_phase()
         full_err = target_xyz - self.sim.tcp_pos()
-        # Cap the commanded TCP step so far targets glide rather than whip.
+        # Cap the commanded TCP step so far targets glide rather than whip. A
+        # higher cap applies pre-grasp (no held cube to fling — see
+        # ik.max_tcp_step_pregrasp), so the drop lands before a fast belt
+        # carries the cube past the trigger point.
+        step_cap = (
+            self.ik.max_tcp_step_pregrasp if self.phase in self._TRACKING_PHASES else self.ik.max_tcp_step
+        )
         dist = float(np.linalg.norm(full_err))
-        err = full_err * (self.ik.max_tcp_step / dist) if dist > self.ik.max_tcp_step else full_err
+        err = full_err * (step_cap / dist) if dist > step_cap else full_err
         dq = self._jac_step(err)
         self.q_cmd = np.clip(
             self.q_cmd + self.ik.servo_gain * dq,
@@ -402,7 +550,14 @@ def _box_xy(sim: _Sim) -> np.ndarray:
     return np.array(sim.model.body_pos[bid][:2], dtype=float)
 
 
-def _reset_episode(robot, sim: _Sim, rng: np.random.Generator, jitter_xy: float) -> None:
+def _reset_episode(
+    robot,
+    sim: _Sim,
+    rng: np.random.Generator,
+    jitter_xy: float,
+    domain_rand: DomainRandomizationConfig | None = None,
+    yaw_jitter_deg: float = 0.0,
+) -> None:
     """Re-apply the home keyframe and (re)place the cube for a fresh episode.
 
     Mirrors SimSO101.connect()'s placement: static belt parks the cube in front of
@@ -420,12 +575,24 @@ def _reset_episode(robot, sim: _Sim, rng: np.random.Generator, jitter_xy: float)
     sim.data.qpos[qa + 1] = base_y + (
         0.0 if robot.config.belt_speed != 0 else rng.uniform(-jitter_xy, jitter_xy)
     )
+    if yaw_jitter_deg:
+        # Rotate the cube about its vertical (Z) axis so the policy doesn't just
+        # memorize one canonical orientation. Kept small by default (see the CLI
+        # help) — the cube's square cross-section means a ~45° yaw presents a
+        # diamond profile to the jaws instead of a flat face, which the anvil-grasp
+        # timing (see PickPlaceExpert) wasn't tuned against.
+        yaw = np.deg2rad(rng.uniform(-yaw_jitter_deg, yaw_jitter_deg))
+        sim.data.qpos[qa + 3 : qa + 7] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
     # Zero the cube's free-joint velocity so it starts at rest.
     sim.data.qvel[sim.cube_dofadr : sim.cube_dofadr + 6] = 0.0
     if robot.config.belt_speed != 0:
         belt_act = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_ACTUATOR, "belt_motor")
         if belt_act >= 0:
             sim.data.ctrl[belt_act] = robot.config.belt_speed
+    # After the keyframe reset (which would otherwise clobber mocap poses back to
+    # their XML default) so distractor placement actually sticks for this episode.
+    if domain_rand is not None:
+        randomize_background(sim, rng, domain_rand)
     mj.mj_forward(sim.model, sim.data)
 
 
@@ -442,11 +609,13 @@ def collect(
     belt_speed_max: float | None = None,
     belt_distance: float = 0.14,
     jitter_xy: float = 0.03,
+    yaw_jitter_deg: float = 0.0,
     cameras: dict | None = None,
     seed: int = 0,
     push: bool = False,
     grasp: GraspConfig | None = None,
     ik: IKConfig | None = None,
+    domain_rand: DomainRandomizationConfig | None = None,
 ) -> dict:
     """Record `episodes` scripted pick-and-place demos to a LeRobotDataset.
 
@@ -461,6 +630,22 @@ def collect(
     speed uniformly from `[belt_speed, belt_speed_max]`, so one dataset spans a
     range of conveyor speeds — the reactive expert tracks the live cube and so
     handles any speed without per-speed tuning.
+
+    `domain_rand`: optional per-episode visual randomization (floor tint, light,
+    background distractors) for sim2real robustness — see `DomainRandomizationConfig`.
+    Off by default (`domain_rand=None` or `DomainRandomizationConfig(enabled=False)`).
+
+    `yaw_jitter_deg`: optional per-episode rotation of the cube about its vertical
+    axis, uniform in [-yaw_jitter_deg, +yaw_jitter_deg]. 0 (off) by default — the
+    cube otherwise always starts at the same fixed orientation, which a policy can
+    memorize instead of learning to recognize the cube at any heading. Verified
+    47/50 (94%) success at +-20 deg across belt_speed 0.0-0.14 (jitter_xy=0.03);
+    the 3 misses didn't correlate with the sampled angle (small angles missed,
+    near-max angles succeeded), so they're pre-existing baseline noise, not a new
+    failure mode from the rotation — +-20 deg is a safe ceiling. Untested beyond
+    it — the cube's square cross-section means a
+    ~45 deg yaw presents a diamond profile to the jaws instead of a flat face,
+    which the anvil-grasp timing (see PickPlaceExpert) wasn't tuned against.
     """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.robots.sim_so101 import SimCameraConfig, SimSO101, SimSO101Config
@@ -516,7 +701,7 @@ def collect(
         ep_speed = float(rng.uniform(belt_speed, belt_speed_max)) if vary_belt else belt_speed
         robot.config.belt_speed = ep_speed
         speeds.append(ep_speed)
-        _reset_episode(robot, sim, rng, jitter_xy)
+        _reset_episode(robot, sim, rng, jitter_xy, domain_rand, yaw_jitter_deg)
         expert = PickPlaceExpert(sim, box_xy, grasp, ik, ep_speed, control_fps=fps)
         success = False
         frames = 0

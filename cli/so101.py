@@ -163,20 +163,26 @@ def _resolve_repo(repo_id: str, for_creation: bool = False) -> str:
     try:
         from lerobot.utils.constants import HF_LEROBOT_HOME
 
-        candidates = sorted(
-            p
-            for p in Path(HF_LEROBOT_HOME).glob(f"*/{repo_id}")
-            # Skip junk dirs: a HF namespace is alphanumeric with -_. and no spaces.
-            if p.is_dir() and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", p.parent.name)
-        )
+        # Namespace dir is either directly `*/<repo_id>` or, if manually filed away,
+        # `*/<subdir>/<repo_id>` for one of _DATASET_SUBDIRS — the namespace is always
+        # the top-level dir either way (glob().parents[...] picks it out for each case).
+        patterns = [f"*/{repo_id}"] + [f"*/{sub}/{repo_id}" for sub in _DATASET_SUBDIRS]
+        seen_namespaces: dict[str, Path] = {}
+        for pattern in patterns:
+            for p in Path(HF_LEROBOT_HOME).glob(pattern):
+                ns = p.relative_to(HF_LEROBOT_HOME).parts[0]
+                # Skip junk dirs: a HF namespace is alphanumeric with -_. and no spaces.
+                if p.is_dir() and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", ns):
+                    seen_namespaces.setdefault(ns, p)
+        candidates = [seen_namespaces[ns] for ns in sorted(seen_namespaces)]
     except Exception:
         candidates = []
     if len(candidates) == 1:
-        ns = candidates[0].parent.name
+        ns = candidates[0].relative_to(HF_LEROBOT_HOME).parts[0]
         typer.secho(f"(not logged in to HF — using local dataset {ns}/{repo_id})", fg="yellow")
         return f"{ns}/{repo_id}"
     if len(candidates) > 1:
-        names = ", ".join(f"{c.parent.name}/{repo_id}" for c in candidates)
+        names = ", ".join(f"{c.relative_to(HF_LEROBOT_HOME).parts[0]}/{repo_id}" for c in candidates)
         raise typer.BadParameter(
             f"Multiple local datasets named '{repo_id}' ({names}). Pass the full 'user/name'."
         )
@@ -206,11 +212,31 @@ def _resolve_policy(policy: str) -> str:
     return policy
 
 
+# Subfolders the user sorts datasets into by hand under $HF_LEROBOT_HOME/<namespace>/
+# (e.g. datasets/OctpusVLA/sim/<name>). Checked in this order when a dataset isn't at
+# the flat path; keeps `--repo-id name` working without symlinks after a manual
+# reorganization. New datasets are still created at the flat path (see _dataset_root).
+_DATASET_SUBDIRS = ("sim", "real", "old")
+
+
 def _dataset_root(repo_id: str) -> Path:
-    """Local directory where lerobot stores a dataset: $HF_LEROBOT_HOME/<repo_id>."""
+    """Local directory where a dataset named `repo_id` (e.g. 'OctpusVLA/name') actually
+    lives: the flat `$HF_LEROBOT_HOME/<repo_id>` path lerobot itself always writes to,
+    or — if that's missing — one of `_DATASET_SUBDIRS` under the same namespace, in case
+    it was manually filed away there. Falls back to the flat path (even if nothing
+    exists there yet) so dataset *creation* is unaffected.
+    """
     from lerobot.utils.constants import HF_LEROBOT_HOME
 
-    return Path(HF_LEROBOT_HOME) / repo_id
+    flat = Path(HF_LEROBOT_HOME) / repo_id
+    if flat.is_dir() or "/" not in repo_id:
+        return flat
+    namespace, name = repo_id.split("/", 1)
+    for sub in _DATASET_SUBDIRS:
+        candidate = Path(HF_LEROBOT_HOME) / namespace / sub / name
+        if candidate.is_dir():
+            return candidate
+    return flat
 
 
 def _maybe_overwrite(repo: str, overwrite: bool) -> None:
@@ -1230,6 +1256,15 @@ def sim_collect_cmd(
         "--jitter",
         help="Uniform ±metres of xy randomisation on the cube start, so demos span grasp positions.",
     ),
+    yaw_jitter: float = typer.Option(
+        0.0,
+        "--yaw-jitter",
+        help="Uniform ±degrees of rotation randomisation on the cube's start heading (about its "
+        "vertical axis). 0 (off) by default — otherwise the cube always starts at the same fixed "
+        "orientation, which a policy can memorize. Verified safe (94% grasp success, no correlation "
+        "between misses and angle) up to +-20; untested beyond that — a ~45deg yaw turns the square "
+        "cross-section into a diamond facing the jaws, which the grasp timing wasn't tuned against.",
+    ),
     seed: int = typer.Option(
         0, "--seed", help="RNG seed for cube-position randomisation (reproducible datasets)."
     ),
@@ -1246,6 +1281,23 @@ def sim_collect_cmd(
         "(GraspConfig default 240 ≈ 8s). Very slow belts need the cube longer to arrive — e.g. "
         "0.01 m/s needs ~650 steps total, so this must be raised (~700) or the expert gives up before "
         "the cube shows up and every episode misses. Defaults are fine for belt_speed >= ~0.015.",
+    ),
+    randomize_bg: bool = typer.Option(
+        False,
+        "--randomize-bg/--no-randomize-bg",
+        help="Per-episode visual domain randomization (floor tint, light pose/intensity, background "
+        "distractor boxes) for sim2real robustness. Off by default — existing recipes/checkpoints are "
+        "unaffected unless you opt in. Diversity is baked into the video at collection time (no "
+        "re-rendering at train time), so it's capped by --episodes: use more episodes than a "
+        "non-randomized recipe to actually cover the randomized range.",
+    ),
+    drop_failures: bool = typer.Option(
+        False,
+        "--drop-failures/--keep-failures",
+        help="Delete episodes where the scripted expert didn't place the cube in the box, right after "
+        "collection (via lerobot's delete_episodes — non-destructive: writes a re-indexed copy, then "
+        "replaces the local dataset dir with it). Off by default, matching collect()'s own default of "
+        "keeping every episode for the caller to filter.",
     ),
 ) -> None:
     """Record scripted-expert pick-and-place demos in the MuJoCo sim (no hardware).
@@ -1279,6 +1331,9 @@ def sim_collect_cmd(
         typer.secho(f"(belt speed varies per episode in [{belt_speed}, {belt_speed_max}] m/s)", fg="yellow")
     typer.secho(f"(recording {episodes} scripted episodes to {repo})", fg="yellow")
     grasp = sim_collect.GraspConfig(wait_steps=wait_steps) if wait_steps is not None else None
+    domain_rand = sim_collect.DomainRandomizationConfig(enabled=True) if randomize_bg else None
+    if randomize_bg:
+        typer.secho("(--randomize-bg: floor/light/distractors vary per episode)", fg="yellow")
     summary = sim_collect.collect(
         repo_id=repo,
         task=task,
@@ -1290,15 +1345,40 @@ def sim_collect_cmd(
         belt_speed_max=belt_speed_max,
         belt_distance=belt_distance,
         jitter_xy=jitter,
+        yaw_jitter_deg=yaw_jitter,
         seed=seed,
         push=push,
         grasp=grasp,
+        domain_rand=domain_rand,
     )
     typer.secho(
         f"recorded {summary['episodes']} episodes, "
         f"{sum(summary['success'])} placed in box ({summary['success_rate']:.0%})",
         fg="green",
     )
+    if drop_failures:
+        fail_idx = [i for i, ok in enumerate(summary["success"]) if not ok]
+        if not fail_idx:
+            typer.secho("(--drop-failures: no failed episodes to drop)", fg="yellow")
+        else:
+            import shutil
+            import tempfile
+
+            from lerobot.datasets.dataset_tools import delete_episodes
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+            root = _dataset_root(repo)
+            ds = LeRobotDataset(repo_id=repo, root=root)
+            with tempfile.TemporaryDirectory(dir=root.parent) as tmp:
+                tmp_out = Path(tmp) / "dropped"
+                delete_episodes(ds, fail_idx, output_dir=tmp_out, repo_id=repo)
+                shutil.rmtree(root)
+                shutil.move(str(tmp_out), str(root))
+            typer.secho(
+                f"(--drop-failures: removed {len(fail_idx)} failed episode(s), "
+                f"{summary['episodes'] - len(fail_idx)} remain)",
+                fg="yellow",
+            )
 
 
 @app.command(context_settings=PASSTHROUGH)
@@ -1552,6 +1632,32 @@ def merge_rollouts(
         f"Merged → {_dataset_root(out_repo)} ({sum(d.num_episodes for d in datasets)} episodes total)",
         fg="green",
     )
+
+
+@app.command("download-dataset")
+def download_dataset(
+    repo_id: str = typer.Option(
+        ..., "--repo-id", help="Hub dataset repo id ('name' → prefixed with your HF user, or 'user/name')."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Delete an existing local copy first (default: reuse/resume it)."
+    ),
+) -> None:
+    """Download a Hugging Face Hub dataset to $HF_LEROBOT_HOME (datasets/<user>/<name>).
+
+    Puts it exactly where `viz`/`train`/`merge-rollouts` expect a local dataset, so any
+    of those commands can use --repo-id right after this without a separate download step
+    (they'd also lazy-download on first access, but this lets you fetch ahead of time and
+    inspect the files directly under datasets/).
+    """
+    from huggingface_hub import snapshot_download
+
+    repo = _resolve_repo(repo_id, for_creation=True)
+    root = _dataset_root(repo)
+    _maybe_overwrite(repo, overwrite)
+    typer.secho(f"Downloading {repo} → {root} ...", fg="blue")
+    snapshot_download(repo, repo_type="dataset", local_dir=str(root))
+    typer.secho(f"Downloaded → {root}", fg="green")
 
 
 @app.command("push-policy")

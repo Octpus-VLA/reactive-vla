@@ -31,6 +31,7 @@ first octpus vla project repository
 | `viz --repo-id name --episode N` | エピソード（フレーム/状態/行動）を Rerun で可視化 |
 | `drop --repo-id name --episodes 0,2` | ローカルデータセットから不良エピソードを削除 |
 | `upload --repo-id name` | ローカルデータセットを Hugging Face Hub にアップロード |
+| `download-dataset --repo-id user/name` | Hugging Face Hub のデータセットを `datasets/` にダウンロード（`viz`/`train`/`merge-rollouts` 等が期待する場所にそのまま置く） |
 | `train --repo-id name [--policy act \| --policy-path ...]` | ポリシーをファインチューニング/学習（詳細は下記） |
 | `push-policy --checkpoint ... --repo-id name` | 学習済みチェックポイントを Hub にアップロード |
 | `policy-test --policy ... --repo-id ...` | オフライン推論の動作確認（ロボット不要） |
