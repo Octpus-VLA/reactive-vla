@@ -216,6 +216,21 @@ pixi run eval --rtc --predict-cube --predictor-camera overall \
   --policy <checkpoint> --task "pick up the red cube" --repo-id rollout_predict
 ```
 
+### 次回やるべきこと（実機）
+
+2026-07-12〜13 の夜間パイプラインで、把持ロジック再設計・ドメインランダム化・実機データ統合を反映した新しいチェックポイントを学習した（sim 492ep + 実機50ep = 542ep、`OctpusVLA/smolvla_sim_real_mix_v2`、loss 0.032で収束）。**このチェックポイントは実機でまだ一度も評価していない。** 次回はまずこれを実機で試す。
+
+```bash
+pixi run eval \
+  --policy outputs/train/smolvla_base/smolvla_sim_real_mix_v2/0712_1402/checkpoints/last \
+  --task "pick up the red cube and place it in the box" \
+  --repo-id rollout_smolvla_sim_real_mix_v2_check
+```
+
+- 静止タスクからの疎通確認を先に行う（キューブを動かして掴めるかも合わせて確認 — 位置の多様性を意図的に増やした学習データなので、ここが直っているはず）。
+- 動くベルトでの成功率も、可能な速度帯（min/middle/semi_max相当）で一通り試す。
+- 実機で今回のsim側変更（把持角度の頑健性・ドメインランダム化）が効いているかは未検証。うまくいかない場合は、`docs/`配下や本セッションの直前の作業（[PR #28](https://github.com/Octpus-VLA/reactive-vla/pull/28)）を参照して原因を切り分ける。
+
 ### シミュレーション
 
 ![sim-eval シーン: SO-101アーム・赤いcubeを載せた緑のベルトコンベア・白い配置先の箱](docs/sim-eval-scene.png)

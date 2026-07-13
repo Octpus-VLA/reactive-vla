@@ -239,6 +239,27 @@ pixi run eval --rtc --predict-cube --predictor-camera overall \
   --policy <checkpoint> --task "pick up the red cube" --repo-id rollout_predict
 ```
 
+### Next up on real hardware
+
+The overnight pipeline on 2026-07-12/13 trained a new checkpoint incorporating the redesigned
+grasp logic, domain randomization, and merged real-hardware data (sim 492ep + real 50ep = 542ep,
+`OctpusVLA/smolvla_sim_real_mix_v2`, loss converged to 0.032). **This checkpoint has not been
+evaluated on real hardware yet.** Try it first next session:
+
+```bash
+pixi run eval \
+  --policy outputs/train/smolvla_base/smolvla_sim_real_mix_v2/0712_1402/checkpoints/last \
+  --task "pick up the red cube and place it in the box" \
+  --repo-id rollout_smolvla_sim_real_mix_v2_check
+```
+
+- Start with a static-task sanity check (including moving the cube to confirm it still grasps —
+  the training data deliberately widened cube-position diversity, so this should hold up now).
+- Then sweep the moving-belt speeds you have real data for (roughly the min/middle/semi_max bands).
+- Whether this session's sim-side changes (grasp robustness, domain randomization) actually transfer
+  to real hardware is untested. If results are poor, see `docs/` and this session's work in
+  [PR #28](https://github.com/Octpus-VLA/reactive-vla/pull/28) to help narrow down the cause.
+
 ### Simulation
 
 ![sim-eval scene: SO-101 arm, green conveyor belt with a red cube, and a white drop-off box](docs/sim-eval-scene.png)
