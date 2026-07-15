@@ -1041,6 +1041,24 @@ def sim_eval(
         "defaults to 0.5s (roughly the replan interval) to stop trailing the cube. Sweep it (e.g. "
         "0.5-1.5) to tune interception; 0.0 restores the old latency-only behaviour.",
     ),
+    engage_cube: bool = typer.Option(
+        False,
+        "--engage-cube/--no-engage-cube",
+        help="RTC only: use --predictor-camera as an independent start gate instead of a policy "
+        "input. Inference stays idle until the cube is predicted to cross --engage-threshold.",
+    ),
+    engage_axis: str = typer.Option("x", "--engage-axis", help="Overhead image axis: x or y."),
+    engage_threshold: float = typer.Option(
+        0.5, "--engage-threshold", help="Normalized overhead coordinate [0,1] of the grasp-zone entry line."
+    ),
+    engage_direction: str = typer.Option(
+        "positive", "--engage-direction", help="Cube travel direction on --engage-axis: positive or negative."
+    ),
+    engage_lead_s: float = typer.Option(
+        0.5,
+        "--engage-lead-s",
+        help="Seconds to extrapolate the cube before testing the engage line, so the arm starts early.",
+    ),
     repo_id: str = typer.Option(
         None,
         "--repo-id",
@@ -1164,12 +1182,14 @@ def sim_eval(
         ]
     else:
         cmd.append("--inference.type=sync")
-    if predict_cube:
+    if predict_cube and engage_cube:
+        raise typer.BadParameter("--predict-cube and --engage-cube are separate experiments; choose one.")
+    if predict_cube or engage_cube:
         if not rtc:
             # --inference.predictor.* is only a field on RTCInferenceConfig; the sync
             # engine has no predictor support, so draccus would reject these flags
             # against a sync config. Require --rtc (matching `eval --predict-cube`).
-            raise typer.BadParameter("--predict-cube requires --rtc (the predictor feeds the RTC engine).")
+            raise typer.BadParameter("--predict-cube/--engage-cube requires --rtc.")
         cam_key = predictor_camera or "camera1"
         valid_keys = {"camera1", *extra_cams}
         if cam_key not in valid_keys:
@@ -1177,14 +1197,29 @@ def sim_eval(
                 f"--predictor-camera '{cam_key}' must be one of {sorted(valid_keys)} "
                 "(camera1, or one of --record-cameras)."
             )
-        # The predictor advances the cube by the inference latency (the PE gap) plus
-        # --predictor-lead-s, so the policy aims where the cube will be at execution
-        # time instead of trailing it (see lerobot.predictors / docs/overhead-predictor.md).
-        cmd += [
-            "--inference.predictor.enabled=true",
-            f"--inference.predictor.camera={cam_key}",
-            f"--inference.predictor.lead_s={predictor_lead_s}",
-        ]
+        if engage_cube:
+            if engage_axis not in {"x", "y"}:
+                raise typer.BadParameter("--engage-axis must be 'x' or 'y'.")
+            if engage_direction not in {"positive", "negative"}:
+                raise typer.BadParameter("--engage-direction must be 'positive' or 'negative'.")
+            if not 0 <= engage_threshold <= 1:
+                raise typer.BadParameter("--engage-threshold must be in [0, 1].")
+            cmd += [
+                "--inference.predictor.enabled=true",
+                "--inference.predictor.mode=engage_gate",
+                f"--inference.predictor.camera={cam_key}",
+                f"--inference.predictor.engage_axis={engage_axis}",
+                f"--inference.predictor.engage_threshold={engage_threshold}",
+                f"--inference.predictor.engage_direction={engage_direction}",
+                f"--inference.predictor.engage_lead_s={engage_lead_s}",
+            ]
+        else:
+            # Time-advance experiment: modify the selected policy observation.
+            cmd += [
+                "--inference.predictor.enabled=true",
+                f"--inference.predictor.camera={cam_key}",
+                f"--inference.predictor.lead_s={predictor_lead_s}",
+            ]
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
     try:
         _run(cmd + list(ctx.args))

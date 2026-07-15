@@ -246,6 +246,24 @@ pixi run sim-eval --policy <checkpoint> --belt-distance 0.18 --repo-id rollout_s
 
 `sim-eval` は2つのシムカメラを使います: `camera1=wrist_cam`（upstreamモデルに最初から定義済みのeye-in-handカメラ、実機SO-101の手首マウントのCADデータに基づく。ポリシーに渡す観測で、実機SO-101の唯一の視覚入力に対応）と `overview`（`scene_cameras.xml`で追加した固定の外部視点。ポリシーには**渡さず**、`--repo-id`での録画時にデータセットへ残すだけ。今後のcube位置/速度predictor用）。ポリシーが`camera1`以外（`camera2`/`camera3`）も期待する場合は、無い分はマスク付きのダミー画像で自動的に埋められます。
 
+#### 実験: wrist-only policy + overall engage gate
+
+`overall` を学習入力にせず、独立した predictor として「cube が把持範囲へ入る直前」だけ RTC を開始する実験もできる。学習では wrist 視点の `observation.images.camera1` だけを policy に対応づけ、マップしない `overview` は自動的に除外する。評価時は wrist を policy 入力、overview を記録兼 supervisor 入力にする:
+
+```bash
+pixi run sim-eval --rtc \
+  --policy <wrist-only-checkpoint> \
+  --policy-camera wrist_cam \
+  --record-cameras overview \
+  --engage-cube --predictor-camera overview \
+  --engage-axis y --engage-direction positive \
+  --engage-threshold 0.50 --engage-lead-s 0.50 \
+  --belt-speed 0.03 --episodes 10 \
+  --task "Grab the cube"
+```
+
+`--engage-threshold` は overhead 画像上の把持範囲入口を `[0,1]` に正規化した座標で、実画像を見てキャリブレーションする。判定には `center + velocity × engage_lead_s` を使うため、cube が境界を実際に越える少し前に開始できる。ゲートは episode 内で一度開くと閉じない。これは **RTC の新規 action chunk 生成を待たせる機能**であり、policy へ overall 画像を渡す機能ではない。
+
 `sim-eval` は既定で `MUJOCO_GL=osmesa`（CPU描画）を使います（`egl`=GPU描画ではありません）。GH200ノードで実測したところ、`egl`だとMuJoCoの描画とCUDA推論が同じGPUを取り合って単発の描画が約19秒詰まることがあり、CPU描画（1フレーム約80ms）に切り替えるとGPUの奪い合いが無くなる分、全体としては約80倍速くなりました。別GPUで描画と推論を分離できる環境などでは `export MUJOCO_GL=egl` で上書きできます。詳細は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照してください。**まだ初期段階の統合**であることに注意してください: 同梱の cube 配置・カメラのフレーミングは暫定値で、実機の画像で学習したポリシーがシムのレンダリング画像でゼロショットに成功することは基本的に期待できません。
 
 ## ロードマップ
