@@ -827,7 +827,9 @@ def evaluate(
         "--predict-cube/--no-predict-cube",
         help="RTC only: enable the overhead cube predictor. The red cube is advanced forward on "
         "--predictor-camera (by the inference latency / PE gap plus --predictor-lead-s) and the "
-        "time-advanced frame is fed to the policy so it aims ahead of the moving cube.",
+        "time-advanced frame is fed to the policy so it aims ahead of the moving cube. The predictor "
+        "auto-stops once the gripper closes (grasp done) so the place phase sees the true frame; "
+        "disable that gate with --inference.predictor.gate_on_grasp=false.",
     ),
     predictor_camera: str = typer.Option(
         None,
@@ -1023,8 +1025,10 @@ def sim_eval(
         "--predict-cube/--no-predict-cube",
         help="RTC only: enable the overhead cube predictor (Tier 3). The red cube is advanced forward on "
         "--predictor-camera before the frame is fed to the policy, so it aims ahead of the moving cube. "
-        "The advance is inference-latency (the PE gap) plus --predictor-lead-s. Requires --rtc (the "
-        "predictor feeds the RTC engine; the sync engine has no predictor support).",
+        "The advance is inference-latency (the PE gap) plus --predictor-lead-s. The predictor auto-stops "
+        "once the gripper closes (grasp done) so the place phase sees the true frame; disable that gate "
+        "with --inference.predictor.gate_on_grasp=false. Requires --rtc (the predictor feeds the RTC "
+        "engine; the sync engine has no predictor support).",
     ),
     predictor_camera: str = typer.Option(
         None,
