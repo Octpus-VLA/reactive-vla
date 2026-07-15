@@ -1021,6 +1021,29 @@ def sim_eval(
         help="Dataset-facing camera key the cube predictor watches (defaults to camera1, the "
         "--policy-camera view). Must be camera1 or one of --record-cameras.",
     ),
+    supervisor_replan: bool = typer.Option(
+        False,
+        "--supervisor-replan/--no-supervisor-replan",
+        help="Enable the Tier 2 supervisor (see CLAUDE.md): watches --supervisor-camera every RTC poll "
+        "tick (unlike --predict-cube, which only runs once a replan is already due) and, once the cube "
+        "is detected visible there, replaces --queue-threshold with the more eager "
+        "--supervisor-queue-threshold for that tick so the next chunk is generated sooner. Requires "
+        "--rtc (it hooks the RTC background thread's replan gate; sync has no such loop).",
+    ),
+    supervisor_camera: str = typer.Option(
+        "front",
+        "--supervisor-camera",
+        help="Dataset-facing camera key the Tier 2 supervisor watches. Defaults to 'front' (the "
+        "eye-in-hand view): the cube entering that narrow FOV is a direct signal it's imminently "
+        "within reach, unlike the wide external --policy-camera view. Must be camera1 or one of "
+        "--record-cameras (e.g. pass --record-cameras front if --policy-camera is overview).",
+    ),
+    supervisor_queue_threshold: int = typer.Option(
+        45,
+        "--supervisor-queue-threshold",
+        help="RTC queue size (in queued steps) the supervisor switches to once triggered — should be "
+        "*larger* than --queue-threshold so it fires earlier, not later.",
+    ),
     repo_id: str = typer.Option(
         None,
         "--repo-id",
@@ -1053,6 +1076,13 @@ def sim_eval(
     mechanism as `eval --predict-cube` on real hardware); without --rtc it
     compensates for chunk-execution drift instead (see
     lerobot.rollout.inference.sync.SyncInferenceEngine). See docs/latency-experiments.md.
+
+    Add --supervisor-replan (requires --rtc) for the Tier 2 supervisor: once the
+    cube is visible on --supervisor-camera (default "front", the eye-in-hand
+    view — pass --record-cameras front if --policy-camera is overview), the RTC
+    replan gate switches from --queue-threshold to the more eager
+    --supervisor-queue-threshold, so the next chunk is generated sooner than
+    Tier 1's queue-only trigger would.
     """
     # Headless offscreen rendering by default — without it MuJoCo falls back to a
     # windowed GLFW context and crashes on HPC nodes with no DISPLAY. osmesa (CPU
@@ -1161,6 +1191,22 @@ def sim_eval(
         cmd += [
             "--inference.predictor.enabled=true",
             f"--inference.predictor.camera={cam_key}",
+        ]
+    if supervisor_replan:
+        if not rtc:
+            raise typer.BadParameter(
+                "--supervisor-replan requires --rtc (it hooks the RTC background thread's replan gate)."
+            )
+        valid_keys = {"camera1", *extra_cams}
+        if supervisor_camera not in valid_keys:
+            raise typer.BadParameter(
+                f"--supervisor-camera '{supervisor_camera}' must be one of {sorted(valid_keys)} "
+                "(camera1, or one of --record-cameras)."
+            )
+        cmd += [
+            "--inference.supervisor.enabled=true",
+            f"--inference.supervisor.camera={supervisor_camera}",
+            f"--inference.supervisor.triggered_queue_threshold={supervisor_queue_threshold}",
         ]
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
     try:
