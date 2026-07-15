@@ -25,6 +25,7 @@ import time
 from contextlib import suppress
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated
 
 import serial.tools.list_ports
 
@@ -53,6 +54,21 @@ MAX_OFFSET = 2047  # 11-bit sign-magnitude limit of the Homing_Offset register
 class Role(StrEnum):
     leader = "leader"
     follower = "follower"
+
+
+class PredictorMode(StrEnum):
+    """How the Tier-3 cube predictor advances the cube (see lerobot.predictors.config).
+
+    - image_shift: edit RGB pixels (color-tracked velocity), policy re-encodes the frame.
+    - latent_warp: rigidly translate the cube on the vision patch-token grid (no re-encode).
+    - latent_flow: dense optical flow -> per-patch warp (no color/rigid-motion assumption).
+
+    The two latent modes need a policy exposing a latent-warp hook (currently SmolVLA).
+    """
+
+    image_shift = "image_shift"
+    latent_warp = "latent_warp"
+    latent_flow = "latent_flow"
 
 
 # Per-role defaults: lerobot CLI flag prefix, device type, and a default id whose
@@ -114,6 +130,16 @@ def _add_max_rel(cmd: list[str], extra: list[str], max_rel: float | None) -> Non
     """Cap how far the follower may move per control step (degrees), for a gentler, safer motion."""
     if max_rel is not None and not any(a.startswith("--robot.max_relative_target") for a in extra):
         cmd.append(f"--robot.max_relative_target={max_rel}")
+
+
+def _predictor_mode_flags(mode: PredictorMode) -> list[str]:
+    """draccus flag selecting the predictor time-advance mode.
+
+    Only ``--inference.predictor.mode`` is exposed; the per-mode knobs
+    (latent_mask_threshold, flow_algorithm, flow_motion_threshold) keep their
+    PredictorConfig defaults, which are the sensible values for each mode.
+    """
+    return [f"--inference.predictor.mode={mode.value}"]
 
 
 def _hf_user() -> str | None:
@@ -843,6 +869,16 @@ def evaluate(
         "keeps moving through the whole open-loop chunk window and the arm's reach, so this defaults to "
         "0.5s to stop trailing the cube. Sweep it to tune interception; 0.0 restores latency-only.",
     ),
+    predictor_mode: Annotated[
+        PredictorMode,
+        typer.Option(
+            "--predictor-mode",
+            help="How the cube is advanced when --predict-cube is set: image_shift (edit RGB pixels, "
+            "default), latent_warp (rigid shift on the vision patch-token grid), or latent_flow (dense "
+            "optical-flow per-patch warp). The two latent modes need a policy with a latent-warp hook "
+            "(currently SmolVLA).",
+        ),
+    ] = PredictorMode.image_shift,
 ) -> None:
     """Run a trained policy on the follower and record eval episodes (lerobot-rollout, episodic strategy).
 
@@ -906,6 +942,7 @@ def evaluate(
             f"--inference.predictor.camera={cam_key}",
             f"--inference.predictor.lead_s={predictor_lead_s}",
         ]
+        cmd += _predictor_mode_flags(predictor_mode)
     if episode_time is not None:
         cmd.append(f"--dataset.episode_time_s={episode_time}")
     if reset_time is not None:
@@ -1041,6 +1078,16 @@ def sim_eval(
         "defaults to 0.5s (roughly the replan interval) to stop trailing the cube. Sweep it (e.g. "
         "0.5-1.5) to tune interception; 0.0 restores the old latency-only behaviour.",
     ),
+    predictor_mode: Annotated[
+        PredictorMode,
+        typer.Option(
+            "--predictor-mode",
+            help="How the cube is advanced when --predict-cube is set: image_shift (edit RGB pixels, "
+            "default), latent_warp (rigid shift on the vision patch-token grid), or latent_flow (dense "
+            "optical-flow per-patch warp). The two latent modes need a policy with a latent-warp hook "
+            "(currently SmolVLA).",
+        ),
+    ] = PredictorMode.image_shift,
     repo_id: str = typer.Option(
         None,
         "--repo-id",
@@ -1185,6 +1232,7 @@ def sim_eval(
             f"--inference.predictor.camera={cam_key}",
             f"--inference.predictor.lead_s={predictor_lead_s}",
         ]
+        cmd += _predictor_mode_flags(predictor_mode)
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
     try:
         _run(cmd + list(ctx.args))
