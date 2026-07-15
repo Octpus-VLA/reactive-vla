@@ -25,6 +25,7 @@ import time
 from contextlib import suppress
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated
 
 import serial.tools.list_ports
 
@@ -868,14 +869,16 @@ def evaluate(
         "keeps moving through the whole open-loop chunk window and the arm's reach, so this defaults to "
         "0.5s to stop trailing the cube. Sweep it to tune interception; 0.0 restores latency-only.",
     ),
-    predictor_mode: PredictorMode = typer.Option(
-        PredictorMode.image_shift,
-        "--predictor-mode",
-        help="How the cube is advanced when --predict-cube is set: image_shift (edit RGB pixels, "
-        "default), latent_warp (rigid shift on the vision patch-token grid), or latent_flow (dense "
-        "optical-flow per-patch warp). The two latent modes need a policy with a latent-warp hook "
-        "(currently SmolVLA).",
-    ),
+    predictor_mode: Annotated[
+        PredictorMode,
+        typer.Option(
+            "--predictor-mode",
+            help="How the cube is advanced when --predict-cube is set: image_shift (edit RGB pixels, "
+            "default), latent_warp (rigid shift on the vision patch-token grid), or latent_flow (dense "
+            "optical-flow per-patch warp). The two latent modes need a policy with a latent-warp hook "
+            "(currently SmolVLA).",
+        ),
+    ] = PredictorMode.image_shift,
 ) -> None:
     """Run a trained policy on the follower and record eval episodes (lerobot-rollout, episodic strategy).
 
@@ -1075,14 +1078,16 @@ def sim_eval(
         "defaults to 0.5s (roughly the replan interval) to stop trailing the cube. Sweep it (e.g. "
         "0.5-1.5) to tune interception; 0.0 restores the old latency-only behaviour.",
     ),
-    predictor_mode: PredictorMode = typer.Option(
-        PredictorMode.image_shift,
-        "--predictor-mode",
-        help="How the cube is advanced when --predict-cube is set: image_shift (edit RGB pixels, "
-        "default), latent_warp (rigid shift on the vision patch-token grid), or latent_flow (dense "
-        "optical-flow per-patch warp). The two latent modes need a policy with a latent-warp hook "
-        "(currently SmolVLA).",
-    ),
+    predictor_mode: Annotated[
+        PredictorMode,
+        typer.Option(
+            "--predictor-mode",
+            help="How the cube is advanced when --predict-cube is set: image_shift (edit RGB pixels, "
+            "default), latent_warp (rigid shift on the vision patch-token grid), or latent_flow (dense "
+            "optical-flow per-patch warp). The two latent modes need a policy with a latent-warp hook "
+            "(currently SmolVLA).",
+        ),
+    ] = PredictorMode.image_shift,
     repo_id: str = typer.Option(
         None,
         "--repo-id",
