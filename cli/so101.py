@@ -25,6 +25,7 @@ import time
 from contextlib import suppress
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated
 
 import serial.tools.list_ports
 
@@ -53,6 +54,21 @@ MAX_OFFSET = 2047  # 11-bit sign-magnitude limit of the Homing_Offset register
 class Role(StrEnum):
     leader = "leader"
     follower = "follower"
+
+
+class PredictorMode(StrEnum):
+    """How the Tier-3 cube predictor advances the cube (see lerobot.predictors.config).
+
+    - image_shift: edit RGB pixels (color-tracked velocity), policy re-encodes the frame.
+    - latent_warp: rigidly translate the cube on the vision patch-token grid (no re-encode).
+    - latent_flow: dense optical flow -> per-patch warp (no color/rigid-motion assumption).
+
+    The two latent modes need a policy exposing a latent-warp hook (currently SmolVLA).
+    """
+
+    image_shift = "image_shift"
+    latent_warp = "latent_warp"
+    latent_flow = "latent_flow"
 
 
 # Per-role defaults: lerobot CLI flag prefix, device type, and a default id whose
@@ -114,6 +130,16 @@ def _add_max_rel(cmd: list[str], extra: list[str], max_rel: float | None) -> Non
     """Cap how far the follower may move per control step (degrees), for a gentler, safer motion."""
     if max_rel is not None and not any(a.startswith("--robot.max_relative_target") for a in extra):
         cmd.append(f"--robot.max_relative_target={max_rel}")
+
+
+def _predictor_mode_flags(mode: PredictorMode) -> list[str]:
+    """draccus flag selecting the predictor time-advance mode.
+
+    Only ``--inference.predictor.mode`` is exposed; the per-mode knobs
+    (latent_mask_threshold, flow_algorithm, flow_motion_threshold) keep their
+    PredictorConfig defaults, which are the sensible values for each mode.
+    """
+    return [f"--inference.predictor.mode={mode.value}"]
 
 
 def _hf_user() -> str | None:
@@ -823,9 +849,11 @@ def evaluate(
         help="Seconds per episode before it auto-stops (lerobot default 60). Right-arrow ends one early.",
     ),
     reset_time: float = typer.Option(
-        None,
+        5,
         "--reset-time",
-        help="Seconds between episodes for the follower to return to its initial position (lerobot default 60).",
+        help="Seconds of reset/idle phase between episodes, after the follower's ~1s return-to-initial "
+        "move (lerobot default 60). Defaults to 5s here so runs aren't stalled; raise it if you need "
+        "more time to reset the scene between rollouts.",
     ),
     fps: int = typer.Option(30, "--fps"),
     push: bool = typer.Option(False, "--push/--no-push"),
@@ -860,8 +888,9 @@ def evaluate(
     predict_cube: bool = typer.Option(
         False,
         "--predict-cube/--no-predict-cube",
-        help="RTC only: enable the overhead cube predictor. The red cube is advanced forward by the "
-        "inference latency (PE gap) on --predictor-camera and the time-advanced frame is fed to the policy.",
+        help="RTC only: enable the overhead cube predictor. The red cube is advanced forward on "
+        "--predictor-camera (by the inference latency / PE gap plus --predictor-lead-s) and the "
+        "time-advanced frame is fed to the policy so it aims ahead of the moving cube.",
     ),
     predictor_camera: str = typer.Option(
         None,
@@ -869,6 +898,24 @@ def evaluate(
         help="Overhead camera key the cube predictor watches (defaults to a registered camera named "
         "'overall', else the first). Must be a registered camera.",
     ),
+    predictor_lead_s: float = typer.Option(
+        0.5,
+        "--predictor-lead-s",
+        help="Extra look-ahead in seconds (control time) added on top of the inference-latency advance "
+        "when --predict-cube is set. Latency alone only covers ~one inference; on a conveyor the cube "
+        "keeps moving through the whole open-loop chunk window and the arm's reach, so this defaults to "
+        "0.5s to stop trailing the cube. Sweep it to tune interception; 0.0 restores latency-only.",
+    ),
+    predictor_mode: Annotated[
+        PredictorMode,
+        typer.Option(
+            "--predictor-mode",
+            help="How the cube is advanced when --predict-cube is set: image_shift (edit RGB pixels, "
+            "default), latent_warp (rigid shift on the vision patch-token grid), or latent_flow (dense "
+            "optical-flow per-patch warp). The two latent modes need a policy with a latent-warp hook "
+            "(currently SmolVLA).",
+        ),
+    ] = PredictorMode.image_shift,
 ) -> None:
     """Run a trained policy on the follower and record eval episodes (lerobot-rollout, episodic strategy).
 
@@ -925,12 +972,14 @@ def evaluate(
                     "Register one with `pixi run set-camera`, or pass --predictor-camera."
                 )
             cam_key = "overall" if "overall" in cam_keys else cam_keys[0]
-        # Predictor advances the cube by the inference latency (see lerobot.predictors /
-        # docs/overhead-predictor.md).
+        # Predictor advances the cube by the inference latency plus --predictor-lead-s
+        # (see lerobot.predictors / docs/overhead-predictor.md).
         cmd += [
             "--inference.predictor.enabled=true",
             f"--inference.predictor.camera={cam_key}",
+            f"--inference.predictor.lead_s={predictor_lead_s}",
         ]
+        cmd += _predictor_mode_flags(predictor_mode)
     if episode_time is not None:
         cmd.append(f"--dataset.episode_time_s={episode_time}")
     if reset_time is not None:
@@ -1046,11 +1095,10 @@ def sim_eval(
     predict_cube: bool = typer.Option(
         False,
         "--predict-cube/--no-predict-cube",
-        help="Enable the overhead cube predictor (Tier 3): the red cube is advanced forward on "
-        "--predictor-camera before the frame is fed to the policy. With --rtc this compensates for "
-        "inference latency (the PE gap, as on real hardware — see `eval --help`); without --rtc, sync "
-        "has no such latency but still executes a chunk open-loop for n_action_steps ticks, so this "
-        "instead compensates for cube drift over that window (half the chunk's duration).",
+        help="RTC only: enable the overhead cube predictor (Tier 3). The red cube is advanced forward on "
+        "--predictor-camera before the frame is fed to the policy, so it aims ahead of the moving cube. "
+        "The advance is inference-latency (the PE gap) plus --predictor-lead-s. Requires --rtc (the "
+        "predictor feeds the RTC engine; the sync engine has no predictor support).",
     ),
     predictor_camera: str = typer.Option(
         None,
@@ -1058,6 +1106,25 @@ def sim_eval(
         help="Dataset-facing camera key the cube predictor watches (defaults to camera1, the "
         "--policy-camera view). Must be camera1 or one of --record-cameras.",
     ),
+    predictor_lead_s: float = typer.Option(
+        0.5,
+        "--predictor-lead-s",
+        help="Extra look-ahead in seconds (control time) added on top of the inference-latency "
+        "advance when --predict-cube is set. Latency alone only covers ~one inference; on a conveyor "
+        "the cube keeps moving through the whole open-loop chunk window and the arm's reach, so this "
+        "defaults to 0.5s (roughly the replan interval) to stop trailing the cube. Sweep it (e.g. "
+        "0.5-1.5) to tune interception; 0.0 restores the old latency-only behaviour.",
+    ),
+    predictor_mode: Annotated[
+        PredictorMode,
+        typer.Option(
+            "--predictor-mode",
+            help="How the cube is advanced when --predict-cube is set: image_shift (edit RGB pixels, "
+            "default), latent_warp (rigid shift on the vision patch-token grid), or latent_flow (dense "
+            "optical-flow per-patch warp). The two latent modes need a policy with a latent-warp hook "
+            "(currently SmolVLA).",
+        ),
+    ] = PredictorMode.image_shift,
     repo_id: str = typer.Option(
         None,
         "--repo-id",
@@ -1084,12 +1151,12 @@ def sim_eval(
     measures success rate / success step, exactly like the rest of `eval`'s
     docs above describe.
 
-    Add --predict-cube to advance the tracked cube forward on --predictor-camera
-    before feeding the frame to the policy — the Tier 3 predictor. Works with or
-    without --rtc: with --rtc it compensates for inference latency (same
-    mechanism as `eval --predict-cube` on real hardware); without --rtc it
-    compensates for chunk-execution drift instead (see
-    lerobot.rollout.inference.sync.SyncInferenceEngine). See docs/latency-experiments.md.
+    Add --predict-cube (requires --rtc) to advance the tracked cube forward on
+    --predictor-camera before feeding the frame to the policy — the Tier 3
+    predictor. The advance is the inference latency (same mechanism as
+    `eval --predict-cube` on real hardware) plus --predictor-lead-s, so the policy
+    aims ahead of the moving cube instead of trailing it. Sweep --predictor-lead-s
+    to tune interception. See docs/latency-experiments.md.
     """
     # Headless offscreen rendering by default — without it MuJoCo falls back to a
     # windowed GLFW context and crashes on HPC nodes with no DISPLAY. osmesa (CPU
@@ -1182,6 +1249,11 @@ def sim_eval(
     else:
         cmd.append("--inference.type=sync")
     if predict_cube:
+        if not rtc:
+            # --inference.predictor.* is only a field on RTCInferenceConfig; the sync
+            # engine has no predictor support, so draccus would reject these flags
+            # against a sync config. Require --rtc (matching `eval --predict-cube`).
+            raise typer.BadParameter("--predict-cube requires --rtc (the predictor feeds the RTC engine).")
         cam_key = predictor_camera or "camera1"
         valid_keys = {"camera1", *extra_cams}
         if cam_key not in valid_keys:
@@ -1189,16 +1261,15 @@ def sim_eval(
                 f"--predictor-camera '{cam_key}' must be one of {sorted(valid_keys)} "
                 "(camera1, or one of --record-cameras)."
             )
-        # Both sync and rtc inference configs expose --inference.predictor.* (same
-        # PredictorConfig shape), so this works regardless of --rtc. With --rtc the
-        # predictor compensates for inference latency (the real-hardware behavior);
-        # without it, sync has no such latency but still executes a chunk open-loop
-        # for n_action_steps ticks, so the predictor instead compensates for drift
-        # over that window (see lerobot.rollout.inference.sync.SyncInferenceEngine).
+        # The predictor advances the cube by the inference latency (the PE gap) plus
+        # --predictor-lead-s, so the policy aims where the cube will be at execution
+        # time instead of trailing it (see lerobot.predictors / docs/overhead-predictor.md).
         cmd += [
             "--inference.predictor.enabled=true",
             f"--inference.predictor.camera={cam_key}",
+            f"--inference.predictor.lead_s={predictor_lead_s}",
         ]
+        cmd += _predictor_mode_flags(predictor_mode)
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
     try:
         _run(cmd + list(ctx.args))
