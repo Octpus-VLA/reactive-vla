@@ -1044,6 +1044,22 @@ def sim_eval(
         help="RTC queue size (in queued steps) the supervisor switches to once triggered — should be "
         "*larger* than --queue-threshold so it fires earlier, not later.",
     ),
+    supervisor_disable_predictor: bool = typer.Option(
+        True,
+        "--supervisor-disable-predictor/--supervisor-keep-predictor",
+        help="Once the supervisor triggers, stop advancing the cube ahead on the Tier 3 --predict-cube "
+        "camera for that tick (the policy sees the real current frame instead of a predictively-shifted "
+        "one). On by default: once the cube is imminently within reach, predicting further ahead "
+        "overshoots — the real current position matters more than the lead-ahead extrapolation. No-op "
+        "if --predict-cube isn't set.",
+    ),
+    supervisor_execution_horizon: int = typer.Option(
+        None,
+        "--supervisor-execution-horizon",
+        help="Once triggered, use this --execution-horizon (fewer steps committed per chunk) instead of "
+        "the normal one, so the arm re-observes/replans more often through the final approach. Omit to "
+        "leave --execution-horizon unchanged when triggered.",
+    ),
     repo_id: str = typer.Option(
         None,
         "--repo-id",
@@ -1207,7 +1223,10 @@ def sim_eval(
             "--inference.supervisor.enabled=true",
             f"--inference.supervisor.camera={supervisor_camera}",
             f"--inference.supervisor.triggered_queue_threshold={supervisor_queue_threshold}",
+            f"--inference.supervisor.disable_predictor_on_trigger={'true' if supervisor_disable_predictor else 'false'}",
         ]
+        if supervisor_execution_horizon is not None:
+            cmd.append(f"--inference.supervisor.triggered_execution_horizon={supervisor_execution_horizon}")
     typer.secho(f"(summary will be written to {out_path})", fg="yellow")
     try:
         _run(cmd + list(ctx.args))
