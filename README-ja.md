@@ -217,18 +217,34 @@ pixi run eval --rtc --predict-cube --predictor-camera overall \
 
 ### 次回やるべきこと（実機）
 
-2026-07-12〜13 の夜間パイプラインで、把持ロジック再設計・ドメインランダム化・実機データ統合を反映した新しいチェックポイントを学習した（sim 492ep + 実機50ep = 542ep、`OctpusVLA/smolvla_sim_real_mix_v2`、loss 0.032で収束）。**このチェックポイントは実機でまだ一度も評価していない。** 次回はまずこれを実機で試す。
+2026-07-15〜16 のセッションで、画像・state両方にノイズを加えた新しいチェックポイントを学習した（`OctpusVLA/smolvla_sim_real_mix_v4`＝sim 499ep+実機30ep、`OctpusVLA/smolvla_real_static_v6_noise`＝実機staticのみ）。**どちらも実機でまだ一度も評価していない。** 次回はまずこれを実機で試す。
 
 ```bash
 pixi run eval \
-  --policy outputs/train/smolvla_base/smolvla_sim_real_mix_v2/0712_1402/checkpoints/last \
+  --policy OctpusVLA/smolvla_sim_real_mix_v4 \
   --task "pick up the red cube and place it in the box" \
-  --repo-id rollout_smolvla_sim_real_mix_v2_check
+  --repo-id rollout_smolvla_sim_real_mix_v4_check
 ```
 
-- 静止タスクからの疎通確認を先に行う（キューブを動かして掴めるかも合わせて確認 — 位置の多様性を意図的に増やした学習データなので、ここが直っているはず）。
-- 動くベルトでの成功率も、可能な速度帯（min/middle/semi_max相当）で一通り試す。
-- 実機で今回のsim側変更（把持角度の頑健性・ドメインランダム化）が効いているかは未検証。うまくいかない場合は、`docs/`配下や本セッションの直前の作業（[PR #28](https://github.com/Octpus-VLA/reactive-vla/pull/28)）を参照して原因を切り分ける。
+- 静止タスクからの疎通確認を先に行う（キューブを動かして掴めるかも合わせて確認）。
+- 動くベルトでの成功率も、可能な速度帯で一通り試す。
+- ノイズ注入（画像・state双方）が実機のロールアウト安定性に効いているかは未検証（sim/real単体それぞれで比較すると良い）。
+
+**predictor（Tier 3）を使った検証**: 動くcubeに対しては、推論レイテンシ＋lead time分だけcubeを先読みシフトするpredictorを使う。`--predictor-lead-s`（既定0.5秒）を振って、追従が改善するか確認する。
+
+```bash
+pixi run eval --rtc --predict-cube --predictor-camera overall --predictor-lead-s 0.5 \
+  --policy OctpusVLA/smolvla_sim_real_mix_v4 --task "pick up the red cube" --repo-id rollout_predict
+```
+
+**reactiveな早期トリガー（Tier 2 supervisor）の検証**: 手先カメラでcubeの接近を検出した瞬間に (a) リプランを早める, (b) predictorの先読みを止める, (c) チャンク実行長を短くする、という3点セットの仕組みを実装した（[PR #33](https://github.com/Octpus-VLA/reactive-vla/pull/33)、**このブランチには未マージ**）。マージ後、`--supervisor-replan`を使って実機で初めて検証する:
+
+```bash
+pixi run eval --rtc --supervisor-replan --supervisor-camera front \
+  --policy OctpusVLA/smolvla_sim_real_mix_v4 --task "pick up the red cube" --repo-id rollout_supervisor_smoke
+```
+
+具体的な実験手順（A/B比較・閾値スイープ・安全確認など）はPR #33側のREADME追記を参照。
 
 ### シミュレーション
 
