@@ -879,14 +879,61 @@ def evaluate(
             "(currently SmolVLA).",
         ),
     ] = PredictorMode.image_shift,
+    supervisor_replan: bool = typer.Option(
+        False,
+        "--supervisor-replan/--no-supervisor-replan",
+        help="Enable the Tier 2 supervisor (see CLAUDE.md): watches --supervisor-camera every RTC poll "
+        "tick (unlike --predict-cube, which only runs once a replan is already due) and, once the cube "
+        "is detected visible there, replaces --queue-threshold with the more eager "
+        "--supervisor-queue-threshold for that tick so the next chunk is generated sooner. Requires "
+        "--rtc (it hooks the RTC background thread's replan gate; sync has no such loop).",
+    ),
+    supervisor_camera: str = typer.Option(
+        None,
+        "--supervisor-camera",
+        help="Overhead/wrist camera key the Tier 2 supervisor watches (defaults to a registered camera "
+        "named 'front', else the first). Recommended: the eye-in-hand view — the cube entering that "
+        "narrow FOV is a direct signal it's imminently within reach, unlike the wide --predictor-camera "
+        "view. Must be a registered camera.",
+    ),
+    supervisor_queue_threshold: int = typer.Option(
+        45,
+        "--supervisor-queue-threshold",
+        help="RTC queue size (in queued steps) the supervisor switches to once triggered — should be "
+        "*larger* than --queue-threshold so it fires earlier, not later.",
+    ),
+    supervisor_disable_predictor: bool = typer.Option(
+        True,
+        "--supervisor-disable-predictor/--supervisor-keep-predictor",
+        help="Once the supervisor triggers, stop advancing the cube ahead on the Tier 3 --predict-cube "
+        "camera for that tick (the policy sees the real current frame instead of a predictively-shifted "
+        "one). On by default: once the cube is imminently within reach, predicting further ahead "
+        "overshoots — the real current position matters more than the lead-ahead extrapolation. No-op "
+        "if --predict-cube isn't set.",
+    ),
+    supervisor_execution_horizon: int = typer.Option(
+        None,
+        "--supervisor-execution-horizon",
+        help="Once triggered, use this --execution-horizon (fewer steps committed per chunk) instead of "
+        "the normal one, so the arm re-observes/replans more often through the final approach. Omit to "
+        "leave --execution-horizon unchanged when triggered.",
+    ),
 ) -> None:
     """Run a trained policy on the follower and record eval episodes (lerobot-rollout, episodic strategy).
 
     Between episodes the follower automatically returns to its startup position (no leader needed).
     Pass --rtc to drive the follower with async Real-Time Chunking inference instead of the sync engine.
-    Add --predict-cube to advance the red cube forward by the inference latency on the overhead camera
-    before feeding the frame to the policy. Fine-tune the cube mask with passthrough flags, e.g.
-    --inference.predictor.cube.min_area_ratio=0.002.
+    Add --predict-cube to advance the red cube forward by the inference latency (plus --predictor-lead-s)
+    on the overhead camera before feeding the frame to the policy. Fine-tune the cube mask with
+    passthrough flags, e.g. --inference.predictor.cube.min_area_ratio=0.002.
+
+    Add --supervisor-replan (requires --rtc) for the Tier 2 supervisor: once the cube is visible on
+    --supervisor-camera (default a registered camera named "front", the eye-in-hand view), the RTC replan
+    gate switches from --queue-threshold to the more eager --supervisor-queue-threshold, so the next chunk
+    is generated sooner than Tier 1's queue-only trigger would. --supervisor-disable-predictor (on by
+    default) also mutes --predict-cube's forward-shift for that tick; --supervisor-execution-horizon can
+    additionally shrink the chunk commit length at that point. NOT YET VALIDATED ON REAL HARDWARE — see
+    README-ja.md's "次回実機で試すこと" for the experiment plan.
     """
     cfg = _load()
     foll = _require(cfg, "follower")  # the policy drives the follower; no leader needed
@@ -943,6 +990,28 @@ def evaluate(
             f"--inference.predictor.lead_s={predictor_lead_s}",
         ]
         cmd += _predictor_mode_flags(predictor_mode)
+    if supervisor_replan:
+        if not rtc:
+            raise typer.BadParameter(
+                "--supervisor-replan requires --rtc (it hooks the RTC background thread's replan gate)."
+            )
+        sup_cam_key = supervisor_camera
+        if sup_cam_key is None:
+            cam_keys = list((foll.get("cameras") or {}).keys())
+            if not cam_keys:
+                raise typer.BadParameter(
+                    "--supervisor-replan needs a camera but none are registered. "
+                    "Register one with `pixi run set-camera`, or pass --supervisor-camera."
+                )
+            sup_cam_key = "front" if "front" in cam_keys else cam_keys[0]
+        cmd += [
+            "--inference.supervisor.enabled=true",
+            f"--inference.supervisor.camera={sup_cam_key}",
+            f"--inference.supervisor.triggered_queue_threshold={supervisor_queue_threshold}",
+            f"--inference.supervisor.disable_predictor_on_trigger={'true' if supervisor_disable_predictor else 'false'}",
+        ]
+        if supervisor_execution_horizon is not None:
+            cmd.append(f"--inference.supervisor.triggered_execution_horizon={supervisor_execution_horizon}")
     if episode_time is not None:
         cmd.append(f"--dataset.episode_time_s={episode_time}")
     if reset_time is not None:
