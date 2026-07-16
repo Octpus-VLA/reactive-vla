@@ -263,10 +263,21 @@ pixi run sim-eval --policy <checkpoint> --belt-distance 0.18 --repo-id rollout_s
 1. **コンベア（実機）**: 可変速度のベルトコンベア自体・その速度設定の記録/再現手段が無い。
 2. **タスク用データセット**: 既存の `lerobot/svla_so101_pickplace` は据え置きの pick & place。コンベアからの取得 → 箱への配置を含む新規データセットの収集が必要。
 3. **detector の実装が存在しない**: 入力（画像のみ／関節角度も使うか）・出力（接近フラグ／距離／bbox）が未決定。「なんでも挟める」構成にするなら、detector 用の抽象インターフェース（差し替え可能なプロトコル）を `lerobot` フォーク側に新設する設計が必要。
-4. **detector → RTC のイベント駆動トリガー経路が無い**: 現在の RTC（`rollout/inference/rtc.py`）は `queue_threshold`（キュー残量）でのみ再計画する。「detector が近づいたと判定した瞬間に強制リプランする」というイベント駆動の差し込み口（例: `force_replan()` の追加）はまだ実装されていない。
-5. **detector の学習データが無い**: 「物体が接近した」をラベル付けした学習データの収集手段が未整備。
-6. **可変速度に対する評価手段が無い**: 異なるコンベア速度での成功率を比較する評価プロトコル・集計ツールが無い（既存の `eval` は録画のみで成功/失敗の自動判定をしない）。
-7. **実機での RTC 自体が未検証**: シムでの動作確認のみで、実機（`so101_follower`）に対しては一度も流していない。
+4. ~~**detector → RTC のイベント駆動トリガー経路が無い**~~ → **実装済み（Tier 2 supervisor、`--supervisor-replan`）**: 既存の `CubePredictor`（赤cubeのHSVマスク検出）を任意カメラ（既定 `front`＝手先カメラ）に向けて RTC の毎ポーリングで走らせ、cube が映った瞬間に (a) `queue_threshold` をより早く発火する値に切替、(b) Tier 3 predictorの先読みシフトを停止、(c) `execution_horizon` を切替、の3つを同時に行う。設定は `SupervisorConfig`（`third_party/lerobot/src/lerobot/predictors/config.py`）、CLIは `eval`/`sim-eval` 両方に配線済み。**ただし実機での動作検証はまだ**（下記「次回実機で試すこと」参照）。
+5. **detector の学習データが無い**: 上記の通り学習不要のHSV色検出detectorで代替しているため、当面は不要。将来的に学習ベースのdetectorに差し替える場合は別途必要。
+6. **可変速度に対する評価手段が無い**: 異なるコンベア速度での成功率を比較する評価プロトコル・集計ツールが無い（既存の `eval` は録画のみで成功/失敗の自動判定をしない）。sim側は `sim-eval` に成功率に加えグリッパ〜cube距離・TCP軌道長・jerkの指標を追加済みだが、実機評価には未移植。
+7. **実機での RTC 自体が未検証**: シムでの動作確認のみで、実機（`so101_follower`）に対しては一度も流していない。Tier 2 supervisorも同様、シム環境がosmesa（CPU描画）のみでRTC自体を回せていないため、コード単体テストの域を出ていない。
+
+### 次回実機で試すこと（Tier 2 supervisor、未検証）
+
+実機は非同期RTCが実際に使える環境のはずなので、初回はまず「動くか」の確認から:
+
+1. **動作確認**: `pixi run eval --policy <ckpt> --rtc --supervisor-replan --supervisor-camera front --repo-id rollout_supervisor_smoke --episodes 3` を回し、ログに supervisor 発火（`RTC Tier 2 supervisor enabled` および実際に閾値が切り替わった形跡）が出ることを確認。安全のため `--max-rel` で動作範囲を絞ってから。
+2. **A/Bで効果を見る**: 同一チェックポイント・同一コンベア速度で `--supervisor-replan` あり/なしを数エピソードずつ比較。成功率・掴む瞬間の動きの滑らかさ（映像で目視）を見る。
+3. **`--supervisor-queue-threshold` を振る**: 既定45に対し、`--queue-threshold`（既定30）に近い値〜かなり大きい値まで数点試し、閾値が低すぎて効果が無い/高すぎて頻繁に振動しないかを確認。
+4. **`--supervisor-disable-predictor` の要否を確認**: `--predict-cube` 併用時、`--supervisor-disable-predictor`（既定ON）と `--supervisor-keep-predictor` を比較し、掴む瞬間に予測シフトを止める方が本当に安定するかを確認（シム上の設計時の仮説であり実証はまだ）。
+5. **`--supervisor-execution-horizon` を振る**: 未指定（変化なし）と、`--execution-horizon` より小さい値（例 3〜5）を比較し、リアクティブさと安定性のトレードオフを見る。
+6. **安全確認**: supervisor発火の前後でアームの動きが急に不安定にならないか（跳ねる・行き過ぎる等）を必ず目視確認する。異常があれば `--supervisor-queue-threshold` を下げる・`--supervisor-execution-horizon` を大きくする方向で調整。
 
 ## トラブルシューティング
 
