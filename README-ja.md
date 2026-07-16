@@ -195,7 +195,6 @@ HPCでバッチ実行したい場合も、学習と同様に上記コマンド�
 - **カメラ名も固定です。** `pi0_base` は `smolvla_base` と同様に、入力特徴量が `observation.images.base_0_rgb`・`left_wrist_0_rgb`・`right_wrist_0_rgb`（OpenPI/DROID由来のbase + wrist×2のカメラ構成）に固定されています。「データセットのカメラ名をそのまま動的に使う」わけではないので、データセット側のキー名が異なる場合は `--rename_map` が必要です（例: `'{"observation.images.front": "observation.images.base_0_rgb"}'`）。マップしなかったキーは無視され、マップされなかった残りの期待カメラはマスク付きのダミー画像で自動的に埋められます。
 - モデルが大きいため `--batch-size` は4〜8程度に下げてください。`pi0_base` は既定で `train_expert_only=false`・`freeze_vision_encoder=false`・`use_amp=false`（全4Bパラメータをfp32でフル学習）なので、パラメータ・勾配・AdamWのオプティマイザ状態（m, v）だけで **固定約64GB**（4.03B × 4byte × 4）がバッチサイズに関係なく乗ります。つまり「1バッチあたり何GB」という線形の見積もりは成立せず、活性化メモリ（バッチサイズに比例する部分）だけが追加コストです。GPUのVRAM次第なので、目安が欲しい場合は短いステップ数で試し打ちしてください: `pixi run train --policy-path lerobot/pi0_base --repo-id OctpusVLA/<dataset> --batch-size 6 --steps 10 --device cuda -- --rename_map='{"observation.images.front": "observation.images.base_0_rgb"}'`。さらに大きいバッチを通したい場合は次のフラグが効きます（メモリ削減効果が大きい順）: `-- --policy.train_expert_only=true`（VLM本体を凍結しaction expertのみ学習）、`-- --policy.freeze_vision_encoder=true`、`-- --policy.gradient_checkpointing=true`、`-- --policy.use_amp=true`。
 
-> **事前準備が必要**: `pi0_base` のトークナイザーは Google の Gated リポジトリ [`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224) を使います。そのページでライセンスに同意した上で、HFトークンが **fine-grained** タイプの場合は、個別リポジトリのスコープ設定とは別に、トークン全体の **Global** 設定で "Read access to contents of all public gated repos you can access" を有効にしてください（個別リポジトリへの `scoped` 権限だけでは他人の名前空間のGatedリポジトリには効きません）。設定が面倒な場合は fine-grained ではない通常の **Read** タイプのトークンでも構いません。上記の設定でファインチューニングが正常に完走することを確認済みです。
 
 ## 推論
 
@@ -274,16 +273,7 @@ pixi run sim-eval --policy <checkpoint> --belt-distance 0.18 --repo-id rollout_s
 - VLA（`smolvla_base` を想定）と detector の両方の学習が必要。
 - detector の実装方式は未確定。任意の実装に差し替えられる構成にしたい。
 
-### 不足している要素
-
-1. **コンベア（実機）**: 可変速度のベルトコンベア自体・その速度設定の記録/再現手段が無い。
-2. **タスク用データセット**: 既存の `lerobot/svla_so101_pickplace` は据え置きの pick & place。コンベアからの取得 → 箱への配置を含む新規データセットの収集が必要。
-3. **detector の実装が存在しない**: 入力（画像のみ／関節角度も使うか）・出力（接近フラグ／距離／bbox）が未決定。「なんでも挟める」構成にするなら、detector 用の抽象インターフェース（差し替え可能なプロトコル）を `lerobot` フォーク側に新設する設計が必要。
-4. **detector → RTC のイベント駆動トリガー経路が無い**: 現在の RTC（`rollout/inference/rtc.py`）は `queue_threshold`（キュー残量）でのみ再計画する。「detector が近づいたと判定した瞬間に強制リプランする」というイベント駆動の差し込み口（例: `force_replan()` の追加）はまだ実装されていない。
-5. **detector の学習データが無い**: 「物体が接近した」をラベル付けした学習データの収集手段が未整備。
-6. **可変速度に対する評価手段が無い**: 異なるコンベア速度での成功率を比較する評価プロトコル・集計ツールが無い（既存の `eval` は録画のみで成功/失敗の自動判定をしない）。
-7. **実機での RTC 自体が未検証**: シムでの動作確認のみで、実機（`so101_follower`）に対しては一度も流していない。
-
-## トラブルシューティング
-
-実行中のジョブは `qstat` で確認できます。
+### やるべきこと
+- シミュレーションの画像にノイズを加えたデータ収集
+- 実際の記録と合わせたデータでモデルを学習
+- 評価指標を実機での動作においても加える（追従性能など差分を定量化）

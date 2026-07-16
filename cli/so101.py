@@ -240,11 +240,22 @@ def _dataset_root(repo_id: str) -> Path:
 
 
 def _maybe_overwrite(repo: str, overwrite: bool) -> None:
-    """Delete an existing local dataset dir so lerobot-record can recreate it."""
+    """Delete an existing local dataset dir so lerobot-record can recreate it.
+
+    `root` may be a symlink (the datasets/OctpusVLA/ reorg symlinks flat names to
+    sim/<name>) — shutil.rmtree refuses to operate directly on a symlink, so remove
+    the link and rmtree its target instead of the link itself.
+    """
     if not overwrite:
         return
     root = _dataset_root(repo)
-    if root.exists():
+    if root.is_symlink():
+        typer.secho(f"--overwrite: removing existing dataset at {root} (symlink -> {root.resolve()})", fg="yellow")
+        target = root.resolve()
+        root.unlink()
+        if target.exists():
+            shutil.rmtree(target)
+    elif root.exists():
         typer.secho(f"--overwrite: removing existing dataset at {root}", fg="yellow")
         shutil.rmtree(root)
 

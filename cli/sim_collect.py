@@ -90,10 +90,47 @@ class DomainRandomizationConfig:
     spawn_prob: float = 0.6
     distractor_xy_range: float = 0.45  # metres from robot base, excluding the keepout
     distractor_keepout_radius: float = 0.22  # metres from base; nothing spawns closer
+    # Extra clearance (metres) added around the belt's and box's actual footprint
+    # (see _aabb_for_bodies) so distractors can't render on top of/overlapping either —
+    # the base-centred keepout circle alone doesn't cover them, since both sit well
+    # outside a small radius from the robot base (belt runs out to y=+-0.33, box is at
+    # x=0.30+belt_distance).
+    distractor_belt_box_margin: float = 0.05
     distractor_size_lo: float = 0.01
     distractor_size_hi: float = 0.035
     distractor_height_lo: float = 0.02
     distractor_height_hi: float = 0.12
+
+
+def _aabb_for_bodies(
+    sim: "_Sim", body_names: list[str], margin: float
+) -> tuple[float, float, float, float] | None:
+    """World-frame xy axis-aligned bounding box (min_x, max_x, min_y, max_y) unioning
+    every geom attached to the given bodies, expanded by `margin`. Assumes those
+    bodies/geoms carry no rotation (true for scene_cube.xml's belt/box, which are
+    positioned by `pos` only) so body_pos + geom_pos +/- geom_size is exact. Returns
+    None if none of the bodies (or their geoms) exist."""
+    mj = sim._mj
+    model = sim.model
+    xs: list[float] = []
+    ys: list[float] = []
+    for body_name in body_names:
+        bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+        if bid < 0:
+            continue
+        bx, by = float(model.body_pos[bid][0]), float(model.body_pos[bid][1])
+        for gid in range(model.ngeom):
+            if model.geom_bodyid[gid] != bid:
+                continue
+            gx = bx + float(model.geom_pos[gid][0])
+            gy = by + float(model.geom_pos[gid][1])
+            hx = float(model.geom_size[gid][0])
+            hy = float(model.geom_size[gid][1])
+            xs += [gx - hx, gx + hx]
+            ys += [gy - hy, gy + hy]
+    if not xs:
+        return None
+    return min(xs) - margin, max(xs) + margin, min(ys) - margin, max(ys) + margin
 
 
 def randomize_background(sim: "_Sim", rng: np.random.Generator, cfg: DomainRandomizationConfig) -> None:
@@ -122,6 +159,18 @@ def randomize_background(sim: "_Sim", rng: np.random.Generator, cfg: DomainRando
         d = rng.uniform(cfg.light_diffuse_lo, cfg.light_diffuse_hi)
         model.light_diffuse[0] = [d, d, d]
 
+    # Belt + box footprints (world xy, with clearance) so distractors never render on
+    # top of/overlapping either — a base-centred keepout circle alone doesn't cover
+    # them, since both sit well outside a small radius from the robot base.
+    exclude_aabbs = [
+        aabb
+        for aabb in (
+            _aabb_for_bodies(sim, ["conveyor_frame", "belt"], cfg.distractor_belt_box_margin),
+            _aabb_for_bodies(sim, ["box"], cfg.distractor_belt_box_margin),
+        )
+        if aabb is not None
+    ]
+
     for geom_name in DISTRACTOR_GEOMS:
         gid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, geom_name)
         body_id = model.geom_bodyid[gid]
@@ -131,12 +180,25 @@ def randomize_background(sim: "_Sim", rng: np.random.Generator, cfg: DomainRando
         if rng.uniform() >= cfg.spawn_prob:
             sim.data.mocap_pos[mocap_id] = [0.0, 0.0, -1.0]  # parked out of view
             continue
-        # Reject-sample xy outside the keepout disc so distractors never overlap the
-        # robot/belt/box working area.
+        # Reject-sample xy outside the robot keepout disc and the belt/box AABBs so
+        # distractors never overlap the robot/belt/box working area. Falls back to
+        # parking out of view if 20 draws can't find a clear spot (should be rare —
+        # the valid area is still >50% of the sampling square).
+        xy = None
         for _ in range(20):
-            xy = rng.uniform(-cfg.distractor_xy_range, cfg.distractor_xy_range, size=2)
-            if np.linalg.norm(xy) >= cfg.distractor_keepout_radius:
-                break
+            candidate = rng.uniform(-cfg.distractor_xy_range, cfg.distractor_xy_range, size=2)
+            if np.linalg.norm(candidate) < cfg.distractor_keepout_radius:
+                continue
+            if any(
+                min_x <= candidate[0] <= max_x and min_y <= candidate[1] <= max_y
+                for min_x, max_x, min_y, max_y in exclude_aabbs
+            ):
+                continue
+            xy = candidate
+            break
+        if xy is None:
+            sim.data.mocap_pos[mocap_id] = [0.0, 0.0, -1.0]
+            continue
         z = rng.uniform(cfg.distractor_height_lo, cfg.distractor_height_hi)
         sim.data.mocap_pos[mocap_id] = [xy[0], xy[1], z]
         size = rng.uniform(cfg.distractor_size_lo, cfg.distractor_size_hi, size=3)
@@ -247,18 +309,19 @@ class IKConfig:
     # 0.008 fixed both (verified: monotonic x-reach boundary restored, no more
     # mid-transition drops) at the cost of slightly slower phase transitions.
     max_tcp_step: float = 0.008
-    # Separate (higher) TCP step cap used only while the jaws are still open and
-    # empty (approach/descend/wait/drop/grasp — see PickPlaceExpert._TRACKING_PHASES):
-    # nothing is held yet, so there is no flinging risk, but the *drop* phase's
-    # vertical descent must complete before the belt carries the cube past the
-    # trigger point. At the default 0.008 (≈0.24 m/s max TCP speed) the descent
-    # itself takes long enough that belt_speed ≳ 0.18 m/s carries the cube past
-    # the gate before the fixed finger lands, regardless of drop-trigger timing —
-    # confirmed by sweeping the trigger offset at 0.18-0.40 m/s and finding no
-    # offset that recovers a clean grasp. 0.02 (≈0.6 m/s) fixes that without
-    # touching the held-phase cap (verified: low/mid/high-speed episodes,
-    # collected before this field existed, are unaffected since it only applies
-    # pre-grasp).
+    # Separate (higher) TCP step cap used only for the "drop" phase (see
+    # PickPlaceExpert._TRACKING_PHASES): its vertical descent must complete before
+    # the belt carries the cube past the trigger point. At the default 0.008
+    # (≈0.24 m/s max TCP speed) the descent itself takes long enough that
+    # belt_speed ≳ 0.18 m/s carries the cube past the gate before the fixed finger
+    # lands, regardless of drop-trigger timing — confirmed by sweeping the trigger
+    # offset at 0.18-0.40 m/s and finding no offset that recovers a clean grasp.
+    # 0.02 (≈0.6 m/s) fixes that. Previously also applied to approach/descend/wait/
+    # grasp (reasoning: nothing held yet, so no flinging risk) — but that let the
+    # servo close the ~3cm approach->descend target jump fast enough to visibly
+    # overshoot/undershoot before settling (~3cm z oscillation over ~0.5s, visible
+    # in recorded video as vertical shaking). Restricting to "drop" only cuts that
+    # to ~0.25cm without touching the fast-belt fix this field exists for.
     max_tcp_step_pregrasp: float = 0.02
 
 
@@ -369,9 +432,16 @@ class PickPlaceExpert:
     """
 
     PHASES = ("approach", "descend", "wait", "drop", "grasp", "lift", "carry", "place", "release", "done")
-    # Phases before the cube is held: safe to servo at ik.max_tcp_step_pregrasp
-    # (no held cube to fling). lift onward uses the lower ik.max_tcp_step.
-    _TRACKING_PHASES = ("approach", "descend", "wait", "drop", "grasp")
+    # Only "drop" needs the higher ik.max_tcp_step_pregrasp cap (its vertical descent
+    # must complete before a fast belt carries the cube past the trigger point — see
+    # IKConfig.max_tcp_step_pregrasp). Applying that same faster cap to
+    # approach/descend/wait/grasp too (as previously done, reasoning "no held cube to
+    # fling") had an unintended side effect: the approach->descend target jumps ~3cm
+    # discontinuously, and the faster cap let the servo close that gap quickly enough
+    # to visibly overshoot/undershoot before settling (measured ~3cm z oscillation
+    # over ~0.5s). Restricting the fast cap to just "drop" cuts that oscillation to
+    # ~0.25cm while leaving drop's fast-belt timing fix untouched.
+    _TRACKING_PHASES = ("drop",)
 
     def __init__(
         self,
@@ -654,7 +724,12 @@ def collect(
 
     cam_specs = cameras or {
         # Policy input: the real SO-101's only camera (wrist-mounted eye-in-hand).
-        "camera1": SimCameraConfig(mujoco_name="wrist_cam", width=320, height=240),
+        # Named "front" (not "camera1") to match the raw key real data natively
+        # records under (see jobs/train/smolvla.pbs's rename_map, and
+        # so101.py's `'{"observation.images.front": "observation.images.camera1"}'`
+        # example) — training/eval still rename whichever camera is chosen to
+        # observation.images.camera1, this is just the on-disk key.
+        "front": SimCameraConfig(mujoco_name="wrist_cam", width=320, height=240),
         # Recording-only privileged external view (defined in scene_cube.xml, was
         # box_top). Not for a wrist-cam-only transfer policy — kept in the dataset
         # for a future cube-position/velocity predictor and place verification.

@@ -19,14 +19,14 @@
 
 | キー | MuJoCo カメラ | 用途 | ポリシー入力 |
 |---|---|---|---|
-| `camera1` | `wrist_cam` | 手首 eye-in-hand（実機 SO-101 の唯一の視覚入力） | 現行の標準ではない（下記参照） |
+| `front` | `wrist_cam` | 手首 eye-in-hand（実機 SO-101 の唯一の視覚入力） | 現行の標準ではない（下記参照） |
 | `overview` | `overview`（旧 `box_top`） | 箱側からロボットを見る固定外部視点 | ✅ これのみ |
 
 > 以前は `belt_top` / `front_high` / `corner` も記録していたが、実際には使っていなかったため削除した（`overview`＝旧 `box_top` に一本化）。
 
 > **記録専用ビューは実機に存在しない固定外部カメラ**（手首カメラのみの実機に転送する把持ポリシーの入力には使わない）。cube 位置・速度の predictor（Tier 3）学習、配置成否の確認、可視化・解析のために残している。学習時は `--rename_map` / policy の入力カメラ指定で使うカメラだけを選べば、他は自動的に学習から除外される。`overview` は `mode="targetbody"` でロボット base を自動追尾するため `--belt-distance` を変えても画角を保つ。
 
-> **現在の標準ワークフローは `overview` を入力カメラにする**（`camera1=wrist_cam` は収集データには引き続き入っているが、学習時に使わない）。`jobs/train/smolvla.pbs` の既定 `CAMERA=overview` が `observation.images.overview → observation.images.camera1` に rename して学習する（`sim-eval` 側も `--policy-camera` の既定が `overview`）。理由は下記「掴む向きの調整」を参照。
+> **現在の標準ワークフローは `overview` を入力カメラにする**（`front=wrist_cam` は収集データには引き続き入っているが、学習時に使わない。実機データが素の状態で使う `front` キーに揃えてあるだけで、`camera1` という名前ではなくなった）。`jobs/train/smolvla.pbs` の既定 `CAMERA=overview` が `observation.images.overview → observation.images.camera1` に rename して学習する（`sim-eval` 側も `--policy-camera` の既定が `overview`）。理由は下記「掴む向きの調整」を参照。
 
 ## 動かし方
 
@@ -105,7 +105,7 @@ home キーフレームの `wrist_roll` を `0 → +90°`（[`assets/so101/scene
   ```
   速度域 0.03-0.12 m/s ランダム化・jitter 0.01・150 エピソードで **150/150 = 100%** 箱入れ成功（GH200）。
 - 個別確認: `max_tcp_step=0.008` にした上で、速度域 0.03/0.05/0.07/0.09/0.10/0.11/0.12 各 8 回 = 56/56 = 100%、静止 cube も 4/4 = 100%。
-- 生成データセットは `LeRobotDataset` で読み込め、`observation.state (6)` / `action (6)` / `observation.images.{camera1,overview} video` を持ち、`pixi run train` 互換（学習時は `CAMERA=overview` で overview を camera1 にリネーム）。
+- 生成データセットは `LeRobotDataset` で読み込め、`observation.state (6)` / `action (6)` / `observation.images.{front,overview} video` を持ち、`pixi run train` 互換（学習時は `CAMERA=overview` で overview を camera1 にリネーム）。
 
 > 過去の実測値（掴む向き調整前・`max_tcp_step=0.015`・jitter 0.03 の版）: 静止 4/4、固定速度各 4/4、jitter=0.03 のまま速度ランダム化すると 150ep で 59% まで低下（原因が上記の掴む向き変更起因の不安定性）。調査の経緯は [docs/latency-experiments.md](latency-experiments.md) 隣接のコミット履歴も参照。
 
