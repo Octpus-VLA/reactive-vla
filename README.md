@@ -31,6 +31,7 @@ first octpus vla project repository
 | `viz --repo-id name --episode N` | Visualize an episode (frames/states/actions) in Rerun |
 | `drop --repo-id name --episodes 0,2` | Delete bad episodes from a local dataset |
 | `upload --repo-id name` | Push a local dataset to the Hugging Face Hub |
+| `merge-rollouts --prefix name_ --output-repo-id name` | Merge datasets recorded under separate `--repo-id` runs (e.g. one per belt speed) into a single dataset |
 | `train --repo-id name [--policy act \| --policy-path ...]` | Fine-tune or train a policy (see below) |
 | `push-policy --checkpoint ... --repo-id name` | Push a trained checkpoint to the Hub |
 | `policy-test --policy ... --repo-id ...` | Offline inference smoke test (no robot needed) |

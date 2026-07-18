@@ -8,6 +8,8 @@ Octpus VLA プロジェクトのドキュメントサイトです。`lerobot` �
 - [SmolVLA ファインチューニング](smolvla-finetuning.md) — 事前学習済み SmolVLA を SO-101 データセットでお試し学習
 - [lerobot editable 構成](lerobot-editable-setup.md) — lerobot 本体を直接編集してカスタムポリシーを追加する構成
 - [RTC sim ロールアウト](rtc-sim-rollout.md) — SmolVLA + RTC 非同期ロールアウトを MuJoCo シミュレーションで動かす
+- [sim スクリプトエキスパート収集](sim-scripted-collect.md) — スクリプトIKエキスパートで MuJoCo シム内の pick-and-place デモを収集する
+- [非同期レイテンシ実験（sync vs RTC）](latency-experiments.md) — 同期推論と RTC 非同期推論のレイテンシを比較する
 - [overhead カメラ予測器による動的 pick](overhead-predictor.md) — overhead カメラで cube を推論レイテンシ分だけ時間前進させ VLA に入力する
 
 ## リンク

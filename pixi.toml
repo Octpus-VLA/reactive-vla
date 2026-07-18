@@ -41,7 +41,7 @@ upload = "python cli/so101.py upload"            # usage: pixi run upload --repo
 merge-rollouts = "python cli/so101.py merge-rollouts"  # usage: pixi run merge-rollouts --prefix rollout_check_ --output-repo-id rollout_check_allspeeds
 train = "python cli/so101.py train"              # usage: pixi run train --repo-id name [--policy act | --policy-path lerobot/smolvla_base] [--wandb] [--push-repo-id name]
 push-policy = "python cli/so101.py push-policy"  # usage: pixi run push-policy --checkpoint outputs/train/<job>/checkpoints/last --repo-id name
-eval = "python cli/so101.py eval"                # usage: pixi run eval --policy <ckpt> --task "..." --repo-id eval_name
+eval = "python cli/so101.py eval"                # usage: pixi run eval --policy <ckpt> --task "..." --repo-id rollout_name
 policy-test = "python cli/so101.py policy-test"  # offline inference smoke test (no robot needed)
 sim-eval = "python cli/so101.py sim-eval"        # usage: pixi run sim-eval --policy <ckpt> --episodes 10 (MuJoCo sim, success rate / success step; add --repo-id rollout_<name> to also record video)
 # scripted IK expert records MuJoCo pick-place demos for fine-tuning.
