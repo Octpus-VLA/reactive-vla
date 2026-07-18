@@ -1,19 +1,20 @@
-# reactive-vla
+# SO-101 CLI リファレンス
 
-[English](README.md) | 日本語
+[English](README-en.md) | 日本語
 
-first octpus vla project repository
+`cli/so101.py` は `pixi run <command>` として公開される、SO-101 実機/シミュレーション操作用の CLI です。このページは全コマンド・全フラグの詳しいリファレンスです。プロジェクト概要・環境構築は[ルートの README](../README.md) を参照してください。
 
-📖 **ドキュメント:** <https://octpus-vla.github.io/reactive-vla/> — セットアップ・SmolVLAファインチューニング・lerobot editable構成・RTC simロールアウトの手順ガイドはこちら。この README はコマンド/機能のリファレンス、ドキュメントサイトは読み物形式の手順ガイドという役割分担です。
+## SO-101 アームの初期登録
 
-## 機能一覧
+詳しくは [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop) を参照。
 
-- **SO-101 実機操作 CLI**（`cli/so101.py`、`pixi run <command>` として公開）— leader/follower アームを一度登録すれば、以降はキャリブレーション・テレオペ・データセットの記録/再生/可視化/編集・Hubへのアップロードまで行えます。詳細は下記の[コマンド一覧](#so-101-コマンド-pixi-run-command)を参照。アーム登録・テレオペの流れ（`set-port` → `setup-motors` → `calibrate` → `teleop`）は [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop) を参考にしています。
-- **模倣学習ファインチューニング** — SO-101 データセットで `smolvla_base` / `pi0_base` をファインチューニング（またはスクラッチ学習）。W&Bロギング・Hugging Face Hubへのpushにも対応。詳細は下記の[ファインチューニング](#ファインチューニング)を参照。
-- **HPCバッチ学習** — `pixi run train` をインタラクティブに実行する代わりに、PBSジョブとして投入できます。PBSスクリプト自体はキュー名・`group_list` などサイト固有の設定を含むため、このリポジトリには含めていません。[ファインチューニング](#ファインチューニング)節のテンプレートを自分のサイト向けに調整して `jobs/` 以下に置いてください（`jobs/` は `.gitignore` 済みです）。
-- **MuJoCoシミュレーション** — 同梱の SO-101 モデル（実機と同じCAD由来、DeepMind Menagerieの`robotstudio_so101`）と `sim_so101` ロボットアダプタにより、実機無しで RTC 非同期ロールアウト経路を検証できます。詳細は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照。
-- **シム上での成功率評価**（`pixi run sim-eval`）— 学習済みポリシーをMuJoCoシム上で実行し、タスク成功率・成功ステップ数を計測（Lift基準: cubeを持ち上げたか）。`--repo-id rollout_<name>` を付ければ動画/データセットも録画できます。詳細は下記の[推論](#推論)を参照。
-- **シム上でのデモ収集**（`pixi run sim-collect`）— 特権状態を使うスクリプトIKエキスパートがMuJoCoシム内で pick-and-place を実演し、(観測, アクション) を `record` と同形式の `LeRobotDataset` に書き出します。実機データで学習したポリシーは sim レンダリング観測に対して分布外（real→sim 視覚ギャップ）なので、このシム観測データでファインチューニングしてギャップを埋めるのが狙いです。詳細は [docs/sim-scripted-collect.md](docs/sim-scripted-collect.md) を参照。
+1. `pixi run set-port leader` / `pixi run set-port follower`（初回のみ）
+2. `pixi run setup-motors leader` / `pixi run setup-motors follower`（これは基本的にやる必要なし）
+3. `pixi run calibrate leader` / `pixi run calibrate follower`
+4. `pixi run set-camera front --index 6`（follower にカメラを割り当て）
+5. `pixi run set-camera overall --index 4`
+6. `pixi run check leader` / `pixi run check follower`（事前診断）
+7. `pixi run teleop` で動作確認
 
 ### SO-101 コマンド （`pixi run <command>`）
 
@@ -41,47 +42,6 @@ first octpus vla project repository
 | `hf-login` / `wandb-login` | push/ロギング前の初回ログイン |
 
 各コマンドの全フラグは `pixi run <command> --help` で確認できます。転送系コマンド（`teleop`・`record`・`train`・`eval`・`sim-eval`・`replay`）の後に置いた引数は、対応する `lerobot-*` CLI にそのまま渡されます。
-
-## セットアップ
-
-このリポジトリは `lerobot` を `third_party/lerobot` に git submodule として取り込み、pixi の editable install で利用します。
-
-### 1. submodule の取得
-
-```bash
-git submodule update --init --recursive
-```
-
-submodule は HTTPS (`https://github.com/Octpus-VLA/lerobot.git`) で参照しているため、SSH鍵の設定は不要です。
-
-### 2. 環境構築
-
-```bash
-pixi install
-```
-
-- [pixi.toml](pixi.toml) の `platforms` には `osx-arm64` / `linux-64` / `linux-aarch64` を登録しています。利用するマシンのアーキテクチャがこれら以外の場合は `pixi workspace platform add <platform>` で追加してください。
-- 動画デコード（`lerobot[dataset]` / torchcodec）に必要な `ffmpeg` も conda 依存として含めています。
-
-### 3. Lint / Format
-
-```bash
-pixi run lint   # ruff check
-pixi run fmt    # ruff format
-pixi run fix    # check --fix + format
-```
-
-詳細な構成・カスタムポリシー追加手順は [docs/lerobot-editable-setup.md](docs/lerobot-editable-setup.md) を参照してください。
-
-### 4. Lerobot(SO-101)の調整
-詳しくは [Adwaver4157/lecture_lerobot_teleop](https://github.com/Adwaver4157/lecture_lerobot_teleop)を参照
-1. `pixi run set-port leader` / `pixi run set-port follower`（初回のみ）
-2. `pixi run setup-motors leader` / `pixi run setup-motors follower`（これは基本的にやる必要なし）
-3. `pixi run calibrate leader` / `pixi run calibrate follower`
-4. `pixi run set-camera front --index 6`（follower にカメラを割り当て）
-5. `pixi run set-camera overall --index 4`
-6. `pixi run check leader` / `pixi run check follower`（事前診断）
-7. `pixi run teleop` で動作確認
 
 ## データ収集
 
@@ -111,7 +71,6 @@ pixi run record \
 | `--keep-viewer` | off | 終了後もRerunビューアを開いたままにする |
 | `--cameras` / `--no-cameras` | `--cameras` | カメラ観測の記録有無 |
 
-
 ### 操作方法
 
 記録は自動的に開始します。フォーカスされたターミナル上で矢印キーで制御します。
@@ -129,7 +88,6 @@ pixi run upload --repo-id <name>
 ```
 
 `--private` でプライベートリポジトリとして作成、`--tags tag1,tag2` でデータセットカードにタグを付けられます。
-
 
 ## ファインチューニング
 
@@ -156,7 +114,6 @@ pixi run train \
 - 学習結果は `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（gitignore済み）に出力されます。`--job-name` はW&B上の表示名のみに使われ、ディレクトリ名には影響しません。
 
 **HPCで長時間バッチ投入したい場合** は、上記コマンドを包んだPBSスクリプトを自分で用意し、`qsub -l walltime=06:00:00 -q small-g jobs/test.pbs`のように実行してください。
-
 
 ### 3. W&B ロギング / Hugging Face Hub へのアップロード（任意）
 
@@ -207,9 +164,9 @@ pixi run eval --policy <checkpoint> --task "..." --repo-id rollout_<name>
 
 実機上でポリシーを実行し、評価エピソードを記録します（内部は `lerobot-rollout --strategy.type=episodic --inference.type=sync` の同期推論）。評価データセットの repo-id は `eval_` ではなく **`rollout_` プレフィックスが必須**です（例: `rollout_test`）。
 
-RTC（非同期 Real-Time Chunking）の非同期ロールアウトは現状 **MuJoCoシム限定**（[docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md)）です。実機で試す場合は `cli/so101.py` にラッパーが無いため、`lerobot-rollout --robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'` のように手動で組み立てる必要があります（シム向けコマンドの `--robot.type` を差し替えたものに相当）。
+RTC（非同期 Real-Time Chunking）の非同期ロールアウトは現状 **MuJoCoシム限定**（[docs/rtc-sim-rollout.md](../docs/rtc-sim-rollout.md)）です。実機で試す場合は `cli/so101.py` にラッパーが無いため、`lerobot-rollout --robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'` のように手動で組み立てる必要があります（シム向けコマンドの `--robot.type` を差し替えたものに相当）。
 
-動く cube の実験では、RTC の overhead predictor を使い、overhead camera 上で赤 cube を推論レイテンシ（PE gap）分だけ前進させた画像を policy に入力できます（[docs/overhead-predictor.md](docs/overhead-predictor.md) を参照）。
+動く cube の実験では、RTC の overhead predictor を使い、overhead camera 上で赤 cube を推論レイテンシ（PE gap）分だけ前進させた画像を policy に入力できます（[docs/overhead-predictor.md](../docs/overhead-predictor.md) を参照）。
 
 ```bash
 pixi run eval --rtc --predict-cube --predictor-camera overall \
@@ -218,7 +175,7 @@ pixi run eval --rtc --predict-cube --predictor-camera overall \
 
 ### シミュレーション
 
-![sim-eval シーン: SO-101アーム・赤いcubeを載せた緑のベルトコンベア・白い配置先の箱](docs/sim-eval-scene.png)
+![sim-eval シーン: SO-101アーム・赤いcubeを載せた緑のベルトコンベア・白い配置先の箱](../docs/sim-eval-scene.png)
 
 ```bash
 # 静的ピック — ベルト停止（既定）、cube はロボット正面に置かれ、その場で把持可能
@@ -247,27 +204,7 @@ pixi run sim-eval --policy <checkpoint> --belt-distance 0.18 --repo-id rollout_s
 
 `sim-eval` は2つのシムカメラを使います: `camera1=wrist_cam`（upstreamモデルに最初から定義済みのeye-in-handカメラ、実機SO-101の手首マウントのCADデータに基づく。ポリシーに渡す観測で、実機SO-101の唯一の視覚入力に対応）と `overview`（`scene_cameras.xml`で追加した固定の外部視点。ポリシーには**渡さず**、`--repo-id`での録画時にデータセットへ残すだけ。今後のcube位置/速度predictor用）。ポリシーが`camera1`以外（`camera2`/`camera3`）も期待する場合は、無い分はマスク付きのダミー画像で自動的に埋められます。
 
-`sim-eval` は既定で `MUJOCO_GL=osmesa`（CPU描画）を使います（`egl`=GPU描画ではありません）。GH200ノードで実測したところ、`egl`だとMuJoCoの描画とCUDA推論が同じGPUを取り合って単発の描画が約19秒詰まることがあり、CPU描画（1フレーム約80ms）に切り替えるとGPUの奪い合いが無くなる分、全体としては約80倍速くなりました。別GPUで描画と推論を分離できる環境などでは `export MUJOCO_GL=egl` で上書きできます。詳細は [docs/rtc-sim-rollout.md](docs/rtc-sim-rollout.md) を参照してください。**まだ初期段階の統合**であることに注意してください: 同梱の cube 配置・カメラのフレーミングは暫定値で、実機の画像で学習したポリシーがシムのレンダリング画像でゼロショットに成功することは基本的に期待できません。
-
-## ロードマップ
-
-### 目標タスク
-
-- ベルトコンベアで流れてくる物体を把持し、箱に入れる。
-- コンベアの速度は複数パターンに変化させる。
-- 画像情報から物体の接近を検出する detector を新規実装し、検出時に VLA へ Action Chunk の再生成を要求することで、既定の（キュー残量ベースの）再計画より速い反応を実現する。
-- VLA（`smolvla_base` を想定）と detector の両方の学習が必要。
-- detector の実装方式は未確定。任意の実装に差し替えられる構成にしたい。
-
-### 不足している要素
-
-1. **コンベア（実機）**: 可変速度のベルトコンベア自体・その速度設定の記録/再現手段が無い。
-2. **タスク用データセット**: 既存の `lerobot/svla_so101_pickplace` は据え置きの pick & place。コンベアからの取得 → 箱への配置を含む新規データセットの収集が必要。
-3. **detector の実装が存在しない**: 入力（画像のみ／関節角度も使うか）・出力（接近フラグ／距離／bbox）が未決定。「なんでも挟める」構成にするなら、detector 用の抽象インターフェース（差し替え可能なプロトコル）を `lerobot` フォーク側に新設する設計が必要。
-4. **detector → RTC のイベント駆動トリガー経路が無い**: 現在の RTC（`rollout/inference/rtc.py`）は `queue_threshold`（キュー残量）でのみ再計画する。「detector が近づいたと判定した瞬間に強制リプランする」というイベント駆動の差し込み口（例: `force_replan()` の追加）はまだ実装されていない。
-5. **detector の学習データが無い**: 「物体が接近した」をラベル付けした学習データの収集手段が未整備。
-6. **可変速度に対する評価手段が無い**: 異なるコンベア速度での成功率を比較する評価プロトコル・集計ツールが無い（既存の `eval` は録画のみで成功/失敗の自動判定をしない）。
-7. **実機での RTC 自体が未検証**: シムでの動作確認のみで、実機（`so101_follower`）に対しては一度も流していない。
+`sim-eval` は既定で `MUJOCO_GL=osmesa`（CPU描画）を使います（`egl`=GPU描画ではありません）。GH200ノードで実測したところ、`egl`だとMuJoCoの描画とCUDA推論が同じGPUを取り合って単発の描画が約19秒詰まることがあり、CPU描画（1フレーム約80ms）に切り替えるとGPUの奪い合いが無くなる分、全体としては約80倍速くなりました。別GPUで描画と推論を分離できる環境などでは `export MUJOCO_GL=egl` で上書きできます。詳細は [docs/rtc-sim-rollout.md](../docs/rtc-sim-rollout.md) を参照してください。**まだ初期段階の統合**であることに注意してください: 同梱の cube 配置・カメラのフレーミングは暫定値で、実機の画像で学習したポリシーがシムのレンダリング画像でゼロショットに成功することは基本的に期待できません。
 
 ## トラブルシューティング
 

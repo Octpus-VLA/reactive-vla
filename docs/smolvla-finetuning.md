@@ -35,7 +35,7 @@ pixi run train \
 !!! note "出力先について"
     `output_dir` は常に `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（`MMDD_HHMM`）です。`--job-name` は W&B 上の表示名だけに使われ、ディレクトリ名には含まれないので、同じ `--job-name` で再実行しても既存ディレクトリと衝突しません。実際のパスは学習実行時のログ（`--output_dir=...`）で確認してください。
 
-W&B ロギングや Hugging Face Hub への push を行う場合は、[README](https://github.com/Octpus-VLA/reactive-vla#trial-run-fine-tuning-smolvla-on-a-so-101-dataset) を参照してください。
+W&B ロギングや Hugging Face Hub への push を行う場合は、[README](https://github.com/Octpus-VLA/reactive-vla#fine-tuning) を参照してください。
 
 ## 3. オフライン推論で確認（ロボット不要）
 
