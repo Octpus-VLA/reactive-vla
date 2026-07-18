@@ -91,6 +91,12 @@ overhead 画像上に **engage 線(把持作業域の上流境界)を一度キ�
 
 3 つとも近年の潜在世界モデル(下記 §8)が示す「ピクセルより**凍結エンコーダの特徴空間**で時間を進める方が学習しやすく頑健」という流れに沿う。
 
+### 把持後は自動で predict を止める(grasp gate)
+
+predictor は cube の**ベルト相対速度**で前進させるため、**掴んだ後**は破綻する — cube はベルトではなく**アームと一緒に**動くので、overhead 重心速度が box 方向へ暴れ、`shift_cube_in_frame` が cube を大きくワープさせて place フェーズの入力を壊す。
+
+対策として `PredictorConfig.gate_on_grasp`(**デフォルト `True`**)を追加した。観測の `gate_gripper_key`(既定 `gripper.pos`、0..100 で 0=全閉・開~70)が `gate_gripper_closed`(既定 `50.0`)を初めて下回った時点で「把持完了」とみなし、**そのエピソードの残りは predictor を OFF にラッチ**する(`reset()` で解除)。実装は `rtc.py` の `_prediction_enabled()`、`_time_advanced_obs` / `_latent_warp_context` の双方で評価される。従来挙動(エピソード全体で predict)に戻すには `--inference.predictor.gate_on_grasp=false`。
+
 - `latent_warp` は `shift_cube_in_frame` の潜在双子。**色マスクで cube を見つけ、重心速度 1 個で丸ごと平行移動**する軽量版。コンベアの cube がほぼ剛体並進ならこれで足りる。
 - `latent_flow` は **色を一切使わず、連続フレーム間の dense optical flow から per-patch 速度を推定**し、各トークンを自分の flow で前進させる(`grid_sample` の backward warp)。AHEAD の「optical flow 条件付きで未来パッチトークンを予測」を、学習済み latent dynamics の代わりに**古典 flow(OpenCV DIS)＋解析的前進**で実現した版。flow バックエンドは差し替え可能で、将来 SEA-RAFT/NeuFlow 等の学習済みモデルを同じ `estimate` 契約で挿せる(その場合は submodule 追加を相談)。
 
