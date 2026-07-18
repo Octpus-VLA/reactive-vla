@@ -1,6 +1,6 @@
 # overhead カメラ予測器による動的 pick
 
-推論レイテンシ（PE gap）分だけ cube を時間前進させた観測を policy に渡すことで、「フレームを撮った瞬間の cube 位置」ではなく「実行される瞬間の cube 位置」を狙う仕組みです。RTC の `--predict-cube` として `pixi run eval` / `pixi run sim-eval` から使えます（[cli/README.md](../cli/README.md#推論)、[docs/rtc-sim-rollout.md](rtc-sim-rollout.md)）。
+推論レイテンシ（PE gap）分だけ cube を時間前進させた観測を policy に渡すことで、「フレームを撮った瞬間の cube 位置」ではなく「実行される瞬間の cube 位置」を狙う仕組みです。RTC の `--predict-cube` として `pixi run eval` / `pixi run sim-eval` から使えます（[cli/README.md](https://github.com/Octpus-VLA/reactive-vla/blob/main/cli/README.md#推論)、[docs/rtc-sim-rollout.md](rtc-sim-rollout.md)）。
 
 ここで使う Tier 1/2/3 は LeRobot の API 名ではなく、プロジェクト内の設計用語です。この予測器は Tier 3（cube の位置・速度から動的に狙い先を決める予測的リプラン）にあたります。
 
@@ -16,7 +16,7 @@
 | `latent_warp` | 色追跡の**単一速度** | **vision パッチトークン**上で cube トークンを**剛体並進**。 | `predictors/latent_warp.py` (`warp_token_grid`) | 不要 |
 | `latent_flow` | **dense optical flow** の**per-patch 速度** | パッチトークンを**各々の flow で前進**(grid_sample)。色判定なし・剛体仮定なし。 | `predictors/optical_flow.py` + `latent_warp.py` (`warp_token_grid_by_flow`) | 不要 |
 
-3 つとも近年の潜在世界モデルが示す「ピクセルより**凍結エンコーダの特徴空間**で時間を進める方が学習しやすく頑健」という流れに沿う（[参考](#参考)）。
+3 つとも近年の潜在世界モデルが示す「ピクセルより**凍結エンコーダの特徴空間**で時間を進める方が学習しやすく頑健」という流れに沿う（末尾の参考文献を参照）。
 
 - `latent_warp` は `shift_cube_in_frame` の潜在双子。**色マスクで cube を見つけ、重心速度 1 個で丸ごと平行移動**する軽量版。コンベアの cube がほぼ剛体並進ならこれで足りる。
 - `latent_flow` は **色を一切使わず、連続フレーム間の dense optical flow から per-patch 速度を推定**し、各トークンを自分の flow で前進させる(`grid_sample` の backward warp)。flow バックエンドは差し替え可能で、同じ `estimate` 契約を実装すれば別のモデルも挿せる。
