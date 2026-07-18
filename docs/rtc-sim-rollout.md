@@ -340,7 +340,6 @@ weight:      1.0       │      1.0 → 0.0（線形）       │            0.0
 - **カメラアングルが暫定**: `scene_cameras.xml` の `pos`/`xyaxes` は当たり値。MP4 がアームを捉えていなければ調整して撮り直し。
 - **単位変換**: body 関節は deg↔rad 線形、gripper は MJCF の joint range と [0,100] を線形対応。符号・オフセットが学習データの action 空間とズレる可能性 → 収録1エピソードを `send_action` に流して qpos の妥当性を確認すると良い。
 - **把持性能は別物**: sim ゼロショットで意味ある把持はしない。この sim の主目的は **action/observation 配線と RTC 非同期挙動の検証**。性能評価には sim 収録データでの再学習が要る。
-- **RTC 効果をさらに強調したい場合（任意）**: `RTCInferenceConfig` に `simulated_latency_s` を足して `_rtc_loop` に sleep を挟む小改修で、凍結区間を意図的に伸ばせる（未実装）。
 
 ---
 
