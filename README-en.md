@@ -6,13 +6,11 @@ English | [日本語](README.md)
 
 reactive-vla is a research project on reactive VLA (Vision-Language-Action) control for dynamic pick tasks, such as grasping an object moving on a conveyor belt and placing it into a box. Built on `lerobot`, it provides a CLI/workflow for recording, fine-tuning, and evaluating SmolVLA / pi0 action-chunking imitation learning, on both real hardware (a SO-101 robot arm) and MuJoCo simulation.
 
-The project's research direction is a three-tier reactive replanning scheme:
+Its reactive control is structured as a three-tier replanning scheme:
 
-- **Tier 1 (implemented)**: replan triggered by the existing action-queue threshold.
-- **Tier 2 (design stage, not implemented)**: event-driven early replan from a camera supervisor.
-- **Tier 3 (design stage, not implemented)**: predictive replan that derives a dynamic effective horizon from the cube's position, velocity, and predicted grasp timing.
-
-See the [Roadmap](#roadmap) below for what's currently implemented and what's still missing.
+- **Tier 1**: replan triggered by the existing action-queue threshold.
+- **Tier 2**: event-driven early replan from a camera supervisor.
+- **Tier 3**: predictive replan that derives a dynamic effective horizon from the cube's position, velocity, and predicted grasp timing.
 
 📖 **Documentation:** <https://octpus-vla.github.io/reactive-vla/> — step-by-step guides (setup, SmolVLA fine-tuning, editable lerobot, RTC sim rollout). This README is the project overview; detailed usage lives in each directory's own docs.
 
@@ -73,26 +71,6 @@ For registering and calibrating the SO-101 arms themselves, see [cli/README-en.m
 - **Full CLI command reference** (detailed flags for recording/training/inference, PBS job template) → [cli/README-en.md](cli/README-en.md)
 - **Step-by-step guides** (setup, fine-tuning, RTC sim rollout, latency experiments, and more) → [documentation site](https://octpus-vla.github.io/reactive-vla/)
 - **SO-101 robot & simulation assets** (MJCF model, photo, license) → [assets/so101/README.md](assets/so101/README.md)
-
-## Roadmap
-
-### Target task
-
-- Grasp an object moving on a belt conveyor and place it in a box.
-- The belt speed should vary across multiple settings.
-- A new detector, built from image input, flags when an object is approaching; on detection it requests the VLA to regenerate its Action Chunk, reacting faster than the default queue-size-based replanning.
-- Both the VLA (assumed `smolvla_base`) and the detector need training.
-- The detector's implementation is undecided; the goal is a pluggable design so any detector implementation can be swapped in.
-
-### What's missing
-
-1. **The conveyor itself**: no variable-speed belt conveyor, and no way to record/reproduce its speed setting.
-2. **A task dataset**: the existing `lerobot/svla_so101_pickplace` is static pick & place. A new dataset covering pickup-from-belt → place-in-box needs to be collected.
-3. **No detector implementation exists yet**: inputs (image only, or also joint state?) and outputs (approach flag / distance / bbox) are undecided. A pluggable design needs an abstract detector interface (a swappable protocol) added on the `lerobot` fork side.
-4. **No event-driven trigger path from detector to RTC**: the current RTC engine (`rollout/inference/rtc.py`) only replans based on `queue_threshold` (remaining queue size). There's no hook yet for "force an immediate replan the moment the detector fires" (e.g. a `force_replan()` method).
-5. **No training data for the detector**: no pipeline exists for collecting/labeling "object is approaching" data.
-6. **No evaluation protocol for variable belt speed**: no tooling to compare success rate across different belt speeds (the existing `eval` only records episodes; it doesn't auto-score success/failure).
-7. **RTC itself is unverified on real hardware**: it has only been exercised in simulation, never run against `so101_follower`.
 
 ## License
 
