@@ -2,7 +2,7 @@
 
 [English](README-en.md) | 日本語
 
-`cli/so101.py` は `pixi run <command>` として公開される、SO-101 実機/シミュレーション操作用の CLI です。このページは全コマンド・全フラグの詳しいリファレンスです。プロジェクト概要・環境構築は[ルートの README](../README.md) を参照してください。
+`cli/so101.py` は `pixi run <command>` として公開される、SO-101 実機/シミュレーション操作用の CLI である。このページは全コマンド・全フラグの詳しいリファレンス。プロジェクト概要・環境構築は[ルートの README](../README.md) を参照。
 
 ## SO-101 アームの初期登録
 
@@ -41,11 +41,11 @@
 | `sim-collect --episodes N --repo-id name` | スクリプトIKエキスパートでMuJoCoシム内の pick-and-place デモを収集（ファインチューニング用） |
 | `hf-login` / `wandb-login` | push/ロギング前の初回ログイン |
 
-各コマンドの全フラグは `pixi run <command> --help` で確認できます。転送系コマンド（`teleop`・`record`・`train`・`eval`・`sim-eval`・`replay`）の後に置いた引数は、対応する `lerobot-*` CLI にそのまま渡されます。
+各コマンドの全フラグは `pixi run <command> --help` で確認できる。転送系コマンド（`teleop`・`record`・`train`・`eval`・`sim-eval`・`replay`）の後に置いた引数は、対応する `lerobot-*` CLI にそのまま渡される。
 
 ## データ収集
 
-`pixi run record` は leader でテレオペしながら follower + カメラの観測を記録し、`lerobot-record` を呼んでデータセットを作成します（`cli/so101.py` の `record` コマンド）。
+`pixi run record` は leader でテレオペしながら follower + カメラの観測を記録し、`lerobot-record` を呼んでデータセットを作成する（`cli/so101.py` の `record` コマンド）。
 
 ```bash
 pixi run record \
@@ -60,7 +60,7 @@ pixi run record \
 | フラグ | デフォルト | 用途 |
 |---|---|---|
 | `--task "<prompt>"` | (必須) | データセットに保存する自然言語のタスク説明 |
-| `--repo-id <name>` | 省略可（`--resume` 時は必須） | データセットid。省略すると `<taskのslug>/<MMDD_HHMM>` を自動生成（例: `--task "pick up the red cube"` → `pick_up_the_red_cube/0620_2015`）。`outputs/train/<policy>/<dataset>/<timestamp>` と同じ命名規則です。`/` を含むため `_resolve_repo` は明示的な namespace/name として扱い、HFユーザー名は前置されません — Hubにpushする場合は `<taskのslug>` という名前のnamespace（実際のHFユーザー/組織）が必要になる点に注意してください |
+| `--repo-id <name>` | 省略可（`--resume` 時は必須） | データセットid。省略すると `<taskのslug>/<MMDD_HHMM>` を自動生成（例: `--task "pick up the red cube"` → `pick_up_the_red_cube/0620_2015`）。`outputs/train/<policy>/<dataset>/<timestamp>` と同じ命名規則。`/` を含むため `_resolve_repo` は明示的な namespace/name として扱い、HFユーザー名は前置されない — Hubにpushする場合は `<taskのslug>` という名前のnamespace（実際のHFユーザー/組織）が必要になる点に注意 |
 | `--episodes N` | 5 | 記録するエピソード数 |
 | `--episode-time SEC` | 20 | 1エピソードの自動停止までの秒数（右矢印キーで早期終了可） |
 | `--reset-time SEC` | 5 | エピソード間でシーンをリセットする秒数 |
@@ -73,7 +73,7 @@ pixi run record \
 
 ### 操作方法
 
-記録は自動的に開始します。フォーカスされたターミナル上で矢印キーで制御します。
+記録は自動的に開始する。フォーカスされたターミナル上で矢印キーで制御する。
 
 - **→ (右矢印)**: 現在のエピソードを停止して次へ進む
 - **← (左矢印)**: 現在のエピソードを再記録
@@ -81,17 +81,17 @@ pixi run record \
 
 ### 記録済みデータセットを後からHugging Face Hubへアップロードしたいとき
 
-`--no-push`（デフォルト）で記録した場合や `record` 実行後に気が変わった場合は、ローカルデータセットを後から `upload` でアップロードできます。
+`--no-push`（デフォルト）で記録した場合や `record` 実行後に気が変わった場合は、ローカルデータセットを後から `upload` でアップロードできる。
 
 ```bash
 pixi run upload --repo-id <name>
 ```
 
-`--private` でプライベートリポジトリとして作成、`--tags tag1,tag2` でデータセットカードにタグを付けられます。
+`--private` でプライベートリポジトリとして作成、`--tags tag1,tag2` でデータセットカードにタグを付けられる。
 
 ## ファインチューニング
 
-事前学習済みモデル [`lerobot/smolvla_base`](https://huggingface.co/lerobot/smolvla_base)（450M）を SO-101 データセットでファインチューニングします。
+事前学習済みモデル [`lerobot/smolvla_base`](https://huggingface.co/lerobot/smolvla_base)（450M）を SO-101 データセットでファインチューニングする。
 
 ### 1. (HPC利用時) GPUノードへの移動
 
@@ -110,10 +110,10 @@ pixi run train \
   -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-- カメラ名がデータセット側で `smolvla_base` の期待する名前（`camera1`〜`camera3`）と異なる場合は `--rename_map` でマッピングします。マップに含めなかったキーは自動的に学習から除外されます。
-- 学習結果は `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（gitignore済み）に出力されます。`--job-name` はW&B上の表示名のみに使われ、ディレクトリ名には影響しません。
+- カメラ名がデータセット側で `smolvla_base` の期待する名前（`camera1`〜`camera3`）と異なる場合は `--rename_map` でマッピングする。マップに含めなかったキーは自動的に学習から除外される。
+- 学習結果は `outputs/train/<policy>/<dataset>/<タイムスタンプ>`（gitignore済み）に出力される。`--job-name` はW&B上の表示名のみに使われ、ディレクトリ名には影響しない。
 
-**HPCで長時間バッチ投入したい場合** は、上記コマンドを包んだPBSスクリプトを自分で用意し、`qsub -l walltime=06:00:00 -q small-g jobs/test.pbs`のように実行してください。
+**HPCで長時間バッチ投入したい場合** は、上記コマンドを包んだPBSスクリプトを自分で用意し、`qsub -l walltime=06:00:00 -q small-g jobs/test.pbs`のように実行する。
 
 ### 3. W&B ロギング / Hugging Face Hub へのアップロード（任意）
 
@@ -128,7 +128,7 @@ pixi run train \
   -- --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-`--wandb-project`/`--wandb-entity` を省略すると既定のプロジェクト/個人アカウントに記録されます。`--push-repo-id` に bare name を渡すとHFユーザー名が自動で前置されます。学習後にまとめてpushしたい場合は `pixi run push-policy --checkpoint <checkpoint-dir> --repo-id <名前>`。
+`--wandb-project`/`--wandb-entity` を省略すると既定のプロジェクト/個人アカウントに記録される。`--push-repo-id` に bare name を渡すとHFユーザー名が自動で前置される。学習後にまとめてpushしたい場合は `pixi run push-policy --checkpoint <checkpoint-dir> --repo-id <名前>`。
 
 ### 4. オフライン推論で確認（ロボット不要）
 
@@ -139,20 +139,20 @@ pixi run policy-test \
   --rename_map='{"observation.images.<camera>": "observation.images.camera1"}'
 ```
 
-データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレ（`mean |action - recorded|`、単位は度）を確認できます。学習時に `--rename_map` でカメラ名を変換した場合は、ここでも同じ `--rename_map` を渡してください。省略するとデータセット側のキー（例: `front`/`overall`）とチェックポイントが期待するキー（`camera1`〜`camera3`）が食い違い、`Feature mismatch between dataset/environment and policy config` エラーになります。
+データセットに記録済みのフレームを入力し、ファインチューニング済みポリシーの推論レイテンシと、記録された実際の行動とのズレ（`mean |action - recorded|`、単位は度）を確認できる。学習時に `--rename_map` でカメラ名を変換した場合は、ここでも同じ `--rename_map` を渡すこと。省略するとデータセット側のキー（例: `front`/`overall`）とチェックポイントが期待するキー（`camera1`〜`camera3`）が食い違い、`Feature mismatch between dataset/environment and policy config` エラーになる。
 
-HPCでバッチ実行したい場合も、学習と同様に上記コマンドを包んだPBSスクリプトを自分で `jobs/` 以下に用意してください（`.gitignore` 済み）。
+HPCでバッチ実行したい場合も、学習と同様に上記コマンドを包んだPBSスクリプトを自分で `jobs/` 以下に用意する（`.gitignore` 済み）。
 
 参考: [SmolVLAファインチューニングガイド](https://huggingface.co/docs/lerobot/en/smolvla)
 
 ### pi0 (`lerobot/pi0_base`)
 
-`--policy-path lerobot/smolvla_base` を `--policy-path lerobot/pi0_base` に変えるだけで同じ手順が使えますが、2点異なります。
+`--policy-path lerobot/smolvla_base` を `--policy-path lerobot/pi0_base` に変えるだけで同じ手順が使えるが、2点異なる。
 
-- **カメラ名も固定です。** `pi0_base` は `smolvla_base` と同様に、入力特徴量が `observation.images.base_0_rgb`・`left_wrist_0_rgb`・`right_wrist_0_rgb`（OpenPI/DROID由来のbase + wrist×2のカメラ構成）に固定されています。「データセットのカメラ名をそのまま動的に使う」わけではないので、データセット側のキー名が異なる場合は `--rename_map` が必要です（例: `'{"observation.images.front": "observation.images.base_0_rgb"}'`）。マップしなかったキーは無視され、マップされなかった残りの期待カメラはマスク付きのダミー画像で自動的に埋められます。
-- モデルが大きいため `--batch-size` は4〜8程度に下げてください。`pi0_base` は既定で `train_expert_only=false`・`freeze_vision_encoder=false`・`use_amp=false`（全4Bパラメータをfp32でフル学習）なので、パラメータ・勾配・AdamWのオプティマイザ状態（m, v）だけで **固定約64GB**（4.03B × 4byte × 4）がバッチサイズに関係なく乗ります。つまり「1バッチあたり何GB」という線形の見積もりは成立せず、活性化メモリ（バッチサイズに比例する部分）だけが追加コストです。GPUのVRAM次第なので、目安が欲しい場合は短いステップ数で試し打ちしてください: `pixi run train --policy-path lerobot/pi0_base --repo-id OctpusVLA/<dataset> --batch-size 6 --steps 10 --device cuda -- --rename_map='{"observation.images.front": "observation.images.base_0_rgb"}'`。さらに大きいバッチを通したい場合は次のフラグが効きます（メモリ削減効果が大きい順）: `-- --policy.train_expert_only=true`（VLM本体を凍結しaction expertのみ学習）、`-- --policy.freeze_vision_encoder=true`、`-- --policy.gradient_checkpointing=true`、`-- --policy.use_amp=true`。
+- **カメラ名も固定。** `pi0_base` は `smolvla_base` と同様に、入力特徴量が `observation.images.base_0_rgb`・`left_wrist_0_rgb`・`right_wrist_0_rgb`（OpenPI/DROID由来のbase + wrist×2のカメラ構成）に固定されている。「データセットのカメラ名をそのまま動的に使う」わけではないので、データセット側のキー名が異なる場合は `--rename_map` が必要（例: `'{"observation.images.front": "observation.images.base_0_rgb"}'`）。マップしなかったキーは無視され、マップされなかった残りの期待カメラはマスク付きのダミー画像で自動的に埋められる。
+- モデルが大きいため `--batch-size` は4〜8程度に下げること。`pi0_base` は既定で `train_expert_only=false`・`freeze_vision_encoder=false`・`use_amp=false`（全4Bパラメータをfp32でフル学習）なので、パラメータ・勾配・AdamWのオプティマイザ状態（m, v）だけで **固定約64GB**（4.03B × 4byte × 4）がバッチサイズに関係なく乗る。つまり「1バッチあたり何GB」という線形の見積もりは成立せず、活性化メモリ（バッチサイズに比例する部分）だけが追加コスト。GPUのVRAM次第なので、目安が欲しい場合は短いステップ数で試し打ちする: `pixi run train --policy-path lerobot/pi0_base --repo-id OctpusVLA/<dataset> --batch-size 6 --steps 10 --device cuda -- --rename_map='{"observation.images.front": "observation.images.base_0_rgb"}'`。さらに大きいバッチを通したい場合は次のフラグが効く（メモリ削減効果が大きい順）: `-- --policy.train_expert_only=true`（VLM本体を凍結しaction expertのみ学習）、`-- --policy.freeze_vision_encoder=true`、`-- --policy.gradient_checkpointing=true`、`-- --policy.use_amp=true`。
 
-> **事前準備が必要**: `pi0_base` のトークナイザーは Google の Gated リポジトリ [`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224) を使います。そのページでライセンスに同意した上で、HFトークンが **fine-grained** タイプの場合は、個別リポジトリのスコープ設定とは別に、トークン全体の **Global** 設定で "Read access to contents of all public gated repos you can access" を有効にしてください（個別リポジトリへの `scoped` 権限だけでは他人の名前空間のGatedリポジトリには効きません）。設定が面倒な場合は fine-grained ではない通常の **Read** タイプのトークンでも構いません。上記の設定でファインチューニングが正常に完走することを確認済みです。
+> **事前準備が必要**: `pi0_base` のトークナイザーは Google の Gated リポジトリ [`google/paligemma-3b-pt-224`](https://huggingface.co/google/paligemma-3b-pt-224) を使う。そのページでライセンスに同意した上で、HFトークンが **fine-grained** タイプの場合は、個別リポジトリのスコープ設定とは別に、トークン全体の **Global** 設定で "Read access to contents of all public gated repos you can access" を有効にする（個別リポジトリへの `scoped` 権限だけでは他人の名前空間のGatedリポジトリには効かない）。設定が面倒な場合は fine-grained ではない通常の **Read** タイプのトークンでも構わない。上記の設定でファインチューニングが正常に完走することを確認済み。
 
 ## 推論
 
@@ -162,11 +162,11 @@ HPCでバッチ実行したい場合も、学習と同様に上記コマンド�
 pixi run eval --policy <checkpoint> --task "..." --repo-id rollout_<name>
 ```
 
-実機上でポリシーを実行し、評価エピソードを記録します（内部は `lerobot-rollout --strategy.type=episodic --inference.type=sync` の同期推論）。評価データセットの repo-id は `eval_` ではなく **`rollout_` プレフィックスが必須**です（例: `rollout_test`）。
+実機上でポリシーを実行し、評価エピソードを記録する（内部は `lerobot-rollout --strategy.type=episodic --inference.type=sync` の同期推論）。評価データセットの repo-id は `eval_` ではなく **`rollout_` プレフィックスが必須**（例: `rollout_test`）。
 
-RTC（非同期 Real-Time Chunking）の非同期ロールアウトは現状 **MuJoCoシム限定**（[docs/rtc-sim-rollout.md](../docs/rtc-sim-rollout.md)）です。実機で試す場合は `cli/so101.py` にラッパーが無いため、`lerobot-rollout --robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'` のように手動で組み立てる必要があります（シム向けコマンドの `--robot.type` を差し替えたものに相当）。
+RTC（非同期 Real-Time Chunking）の非同期ロールアウトは現状 **MuJoCoシム限定**（[docs/rtc-sim-rollout.md](../docs/rtc-sim-rollout.md)）。実機で試す場合は `cli/so101.py` にラッパーが無いため、`lerobot-rollout --robot.type=so101_follower --robot.port=... --robot.id=... --robot.cameras='{...}'` のように手動で組み立てる必要がある（シム向けコマンドの `--robot.type` を差し替えたものに相当）。
 
-動く cube の実験では、RTC の overhead predictor を使い、overhead camera 上で赤 cube を推論レイテンシ（PE gap）分だけ前進させた画像を policy に入力できます（[docs/overhead-predictor.md](../docs/overhead-predictor.md) を参照）。
+動く cube の実験では、RTC の overhead predictor を使い、overhead camera 上で赤 cube を推論レイテンシ（PE gap）分だけ前進させた画像を policy に入力できる（[docs/overhead-predictor.md](../docs/overhead-predictor.md) を参照）。
 
 ```bash
 pixi run eval --rtc --predict-cube --predictor-camera overall \
@@ -188,24 +188,24 @@ pixi run sim-eval --policy <checkpoint> --belt-speed 0.06 --episode-steps 600 --
 pixi run sim-eval --policy <checkpoint> --belt-distance 0.18 --repo-id rollout_sim_test
 ```
 
-実機の代わりに、同梱の MuJoCo SO-101 モデル（`assets/so101/scene_cube.xml`、DeepMind Menagerieの`robotstudio_so101` — 実機SO-101自体のCAD由来モデルで、旧SO-ARM100ではない）に対してポリシーを実行し、タスクの成功を判定します。robosuite/LIBERO 風の **Lift 基準**: cube の z 位置が、接続時の静止高さから `--success-height`（既定 0.05m）以上持ち上がったら成功。これは MuJoCo の内部状態を直接読むだけで、ポリシーの観測には一切乗りません。実行ごとに `success_rate` / `mean_success_step` とエピソードごとの内訳を `outputs/eval/<policy>/<タイムスタンプ>/summary.json`（`--output` で変更可）に書き出します。
+実機の代わりに、同梱の MuJoCo SO-101 モデル（`assets/so101/scene_cube.xml`、DeepMind Menagerieの`robotstudio_so101` — 実機SO-101自体のCAD由来モデルで、旧SO-ARM100ではない）に対してポリシーを実行し、タスクの成功を判定する。robosuite/LIBERO 風の **Lift 基準**: cube の z 位置が、接続時の静止高さから `--success-height`（既定 0.05m）以上持ち上がったら成功。これは MuJoCo の内部状態を直接読むだけで、ポリシーの観測には一切乗らない。実行ごとに `success_rate` / `mean_success_step` とエピソードごとの内訳を `outputs/eval/<policy>/<タイムスタンプ>/summary.json`（`--output` で変更可）に書き出す。
 
-`--repo-id` を渡さない限り録画は一切行わず、成功率/成功ステップ数の計測だけを行います。`--rtc` を付ければ同期推論の代わりに非同期RTC推論で評価できます。
+`--repo-id` を渡さない限り録画は一切行わず、成功率/成功ステップ数の計測だけを行う。`--rtc` を付ければ同期推論の代わりに非同期RTC推論で評価できる。
 
-`--episode-time` は壁時計（実時間）秒数で、sim時間ではありません。実際に何ステップ進むかはレンダリング/推論の速度に依存します（SO-101の重いメッシュをCPU描画すると2カメラで約374ms/callという実測あり）。速度に関係なく再現可能なステップ数が欲しい場合は `--episode-steps N` を付けてください。`--episode-time`/`--episode-steps` のどちらか早く達した方でエピソードが終わります（例: `--fps 30` でsim時間20秒相当にしたいなら `--episode-steps 600`）。
+`--episode-time` は壁時計（実時間）秒数で、sim時間ではない。実際に何ステップ進むかはレンダリング/推論の速度に依存する（SO-101の重いメッシュをCPU描画すると2カメラで約374ms/callという実測あり）。速度に関係なく再現可能なステップ数が欲しい場合は `--episode-steps N` を付ける。`--episode-time`/`--episode-steps` のどちらか早く達した方でエピソードが終わる（例: `--fps 30` でsim時間20秒相当にしたいなら `--episode-steps 600`）。
 
-`scene_cube.xml` は動的ピック&プレースのシーン（本プロジェクトの研究目標）も用意しています。+x を奥として **ロボット(原点) → 緑のコンベアベルト(中心 x=0.19、近縁が基部から14cm) → 白い配置先の箱(中心 x=0.30)** の一直線配置で、いずれもアームのリーチ（約0.40m）内です。ベルトは実機の卓上ベルトコンベアに似せて、固定フレーム（アルミのベース/サイドレール・暗色のエンドキャップ・モーター箱）＋動く緑の表面、の2部構成です。表面は**トレッドミル方式**で動きます — 速度アクチュエータ付きの slide joint で駆動しつつ、`SimSO101.send_action()` が毎制御ステップで位置を 0 に戻すため、緑自体は見た目上は動かず（固定フレームがベルトらしさを出す）、摩擦だけが上に乗った cube をベルト速度で運びます。**`--belt-speed M_PER_S`**（m/s、ロールアウト全体で一定、既定`0`=静止）でベルト速度を設定でき、これに応じて cube の開始位置も変わります:
+`scene_cube.xml` は動的ピック&プレースのシーン（本プロジェクトの研究目標）も用意している。+x を奥として **ロボット(原点) → 緑のコンベアベルト(中心 x=0.19、近縁が基部から14cm) → 白い配置先の箱(中心 x=0.30)** の一直線配置で、いずれもアームのリーチ（約0.40m）内。ベルトは実機の卓上ベルトコンベアに似せて、固定フレーム（アルミのベース/サイドレール・暗色のエンドキャップ・モーター箱）＋動く緑の表面、の2部構成。表面は**トレッドミル方式**で動く — 速度アクチュエータ付きの slide joint で駆動しつつ、`SimSO101.send_action()` が毎制御ステップで位置を 0 に戻すため、緑自体は見た目上は動かず（固定フレームがベルトらしさを出す）、摩擦だけが上に乗った cube をベルト速度で運ぶ。**`--belt-speed M_PER_S`**（m/s、ロールアウト全体で一定、既定`0`=静止）でベルト速度を設定でき、これに応じて cube の開始位置も変わる:
 - **停止時（`--belt-speed 0`、既定）** — cube は**ロボットの正面**（`y=0`）に置かれ、その場で把持可能。静的なピック評価向け。
 - **稼働時（`--belt-speed > 0`）** — cube はベルトの `-y` 端から供給され、リーチ領域を横切るように運ばれる（アームのhome姿勢は cube が通る正面中央を向いている）。ベルトは `y∈[-0.30, 0.30]` なので、拾われなかった cube は +y 端で実機同様に落ちる。
 
-**`--belt-distance M`**（既定 `0.14` = ロボット基部からベルト近縁まで14cm）でベルト+箱+cube のレイアウト全体を前後にスライドできます（cube がアームのリーチ 約0.40m 内に収まる範囲で）。
+**`--belt-distance M`**（既定 `0.14` = ロボット基部からベルト近縁まで14cm）でベルト+箱+cube のレイアウト全体を前後にスライドできる（cube がアームのリーチ 約0.40m 内に収まる範囲で）。
 
-**`--success-criterion`** で成功判定の種類を選べます: `lift`（既定・上記の Lift 基準）または **`place_in_box`** — cube が白い箱の**内部に静止**したら成功（フットプリント内・リムより下・静止）。つまりピック&プレース全体の成功。`--belt-speed` と組み合わせれば動的タスクになります。
+**`--success-criterion`** で成功判定の種類を選べる: `lift`（既定・上記の Lift 基準）または **`place_in_box`** — cube が白い箱の**内部に静止**したら成功（フットプリント内・リムより下・静止）。つまりピック&プレース全体の成功。`--belt-speed` と組み合わせれば動的タスクになる。
 
-`sim-eval` は2つのシムカメラを使います: `camera1=wrist_cam`（upstreamモデルに最初から定義済みのeye-in-handカメラ、実機SO-101の手首マウントのCADデータに基づく。ポリシーに渡す観測で、実機SO-101の唯一の視覚入力に対応）と `overview`（`scene_cameras.xml`で追加した固定の外部視点。ポリシーには**渡さず**、`--repo-id`での録画時にデータセットへ残すだけ。今後のcube位置/速度predictor用）。ポリシーが`camera1`以外（`camera2`/`camera3`）も期待する場合は、無い分はマスク付きのダミー画像で自動的に埋められます。
+`sim-eval` は2つのシムカメラを使う: `camera1=wrist_cam`（upstreamモデルに最初から定義済みのeye-in-handカメラ、実機SO-101の手首マウントのCADデータに基づく。ポリシーに渡す観測で、実機SO-101の唯一の視覚入力に対応）と `overview`（`scene_cameras.xml`で追加した固定の外部視点。ポリシーには**渡さず**、`--repo-id`での録画時にデータセットへ残すだけ。今後のcube位置/速度predictor用）。ポリシーが`camera1`以外（`camera2`/`camera3`）も期待する場合は、無い分はマスク付きのダミー画像で自動的に埋められる。
 
-`sim-eval` は既定で `MUJOCO_GL=osmesa`（CPU描画）を使います（`egl`=GPU描画ではありません）。GH200ノードで実測したところ、`egl`だとMuJoCoの描画とCUDA推論が同じGPUを取り合って単発の描画が約19秒詰まることがあり、CPU描画（1フレーム約80ms）に切り替えるとGPUの奪い合いが無くなる分、全体としては約80倍速くなりました。別GPUで描画と推論を分離できる環境などでは `export MUJOCO_GL=egl` で上書きできます。詳細は [docs/rtc-sim-rollout.md](../docs/rtc-sim-rollout.md) を参照してください。**まだ初期段階の統合**であることに注意してください: 同梱の cube 配置・カメラのフレーミングは暫定値で、実機の画像で学習したポリシーがシムのレンダリング画像でゼロショットに成功することは基本的に期待できません。
+`sim-eval` は既定で `MUJOCO_GL=osmesa`（CPU描画）を使う（`egl`=GPU描画ではない）。GH200ノードで実測したところ、`egl`だとMuJoCoの描画とCUDA推論が同じGPUを取り合って単発の描画が約19秒詰まることがあり、CPU描画（1フレーム約80ms）に切り替えるとGPUの奪い合いが無くなる分、全体としては約80倍速くなった。別GPUで描画と推論を分離できる環境などでは `export MUJOCO_GL=egl` で上書きできる。詳細は [docs/rtc-sim-rollout.md](../docs/rtc-sim-rollout.md) を参照。**まだ初期段階の統合**であることに注意: 同梱の cube 配置・カメラのフレーミングは暫定値で、実機の画像で学習したポリシーがシムのレンダリング画像でゼロショットに成功することは基本的に期待できない。
 
 ## トラブルシューティング
 
-実行中のジョブは `qstat` で確認できます。
+実行中のジョブは `qstat` で確認できる。
