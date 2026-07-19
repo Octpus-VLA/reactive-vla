@@ -6,7 +6,7 @@
 
 reactive-vla は、ベルトコンベア上を動く物体を掴んで箱に入れる、といった動的なピック&プレースタスクに取り組む VLA（Vision-Language-Action）制御の研究プロジェクトである。`lerobot` をベースに、SmolVLA / pi0 のアクションチャンク方式の模倣学習を、実機（SO-101 ロボットアーム）と MuJoCo シミュレーションの両方で記録・学習・評価できる CLI/ワークフローをこのリポジトリで提供する。
 
-リアクティブ制御は、既存のアクションキュー残量に基づく再計画をベースラインに、カメラ supervisor によるイベント駆動の早期再計画、cube の位置・速度・推定把持タイミングから動的に有効ホライズンを決める予測的な再計画へと段階的に拡張していく設計である。各段階の呼称（プロジェクト内では Tier 1〜3 と呼ぶ）は [CLAUDE.md](https://github.com/Octpus-VLA/reactive-vla/blob/main/CLAUDE.md) を参照。
+リアクティブ制御は、既存のアクションキュー残量に基づく再計画をベースラインに、カメラ supervisor によるイベント駆動の早期再計画、cube の位置・速度・推定把持タイミングから動的に有効ホライズンを決める予測的な再計画へと段階的に拡張していく設計である。詳細は [CLAUDE.md](https://github.com/Octpus-VLA/reactive-vla/blob/main/CLAUDE.md) を参照。
 
 📖 **ドキュメント:** <https://octpus-vla.github.io/reactive-vla/> — セットアップ・SmolVLAファインチューニング・lerobot editable構成・RTC simロールアウトの手順ガイドはこちら。この README はプロジェクト概要、詳しい使い方は各ディレクトリのドキュメントという役割分担である。
 

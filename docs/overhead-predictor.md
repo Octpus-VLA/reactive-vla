@@ -2,7 +2,7 @@
 
 推論レイテンシ（PE gap）分だけ cube を時間前進させた観測を policy に渡すことで、「フレームを撮った瞬間の cube 位置」ではなく「実行される瞬間の cube 位置」を狙う仕組み。RTC の `--predict-cube` として `pixi run eval` / `pixi run sim-eval` から使える（[cli/README.md](https://github.com/Octpus-VLA/reactive-vla/blob/main/cli/README.md#推論)、[docs/rtc-sim-rollout.md](rtc-sim-rollout.md)）。
 
-ここで使う Tier 1/2/3 は LeRobot の API 名ではなく、プロジェクト内の設計用語。この予測器は Tier 3（cube の位置・速度から動的に狙い先を決める予測的リプラン）にあたる。
+この予測器は、cube の位置・速度から動的に狙い先を決める予測的リプランにあたる（[CLAUDE.md](https://github.com/Octpus-VLA/reactive-vla/blob/main/CLAUDE.md) 参照）。
 
 ---
 

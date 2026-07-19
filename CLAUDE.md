@@ -13,13 +13,13 @@ This file provides project guidance for AI coding agents working in this reposit
 
 The project studies reactive VLA control for dynamic pick tasks, especially grasping a cube moving on a conveyor belt and placing it into a box. The near-term direction is to combine SmolVLA/LeRobot action chunking with supervisor-triggered and eventually predictive replanning.
 
-## Current Reactivity Terms
+## Current Reactivity Approach
 
-- Tier 1: queue-based replan from the existing action queue threshold.
-- Tier 2: event-triggered early replan from a camera supervisor.
-- Tier 3: predictive/adaptive replan using cube position, velocity, predicted grasp timing, and dynamic effective horizon.
+- Queue-based replan from the existing action queue threshold (baseline).
+- Event-triggered early replan from a camera supervisor.
+- Predictive/adaptive replan using cube position, velocity, predicted grasp timing, and dynamic effective horizon.
 
-These Tier names are project design terms, not upstream LeRobot API names.
+Refer to each mechanism by its description above, not by a "Tier N" label — the project has moved away from that naming.
 
 ## Repository Notes
 

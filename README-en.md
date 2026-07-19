@@ -6,7 +6,7 @@ English | [日本語](README.md)
 
 reactive-vla is a research project on reactive VLA (Vision-Language-Action) control for dynamic pick tasks, such as grasping an object moving on a conveyor belt and placing it into a box. Built on `lerobot`, it provides a CLI/workflow for recording, fine-tuning, and evaluating SmolVLA / pi0 action-chunking imitation learning, on both real hardware (a SO-101 robot arm) and MuJoCo simulation.
 
-Its reactive control escalates in stages: a baseline replan triggered by the existing action-queue threshold, an event-driven early replan from a camera supervisor, and a predictive replan that derives a dynamic effective horizon from the cube's position, velocity, and predicted grasp timing. See [CLAUDE.md](https://github.com/Octpus-VLA/reactive-vla/blob/main/CLAUDE.md) for how this project refers to these stages (Tier 1-3).
+Its reactive control escalates in stages: a baseline replan triggered by the existing action-queue threshold, an event-driven early replan from a camera supervisor, and a predictive replan that derives a dynamic effective horizon from the cube's position, velocity, and predicted grasp timing. See [CLAUDE.md](https://github.com/Octpus-VLA/reactive-vla/blob/main/CLAUDE.md) for details.
 
 📖 **Documentation:** <https://octpus-vla.github.io/reactive-vla/> — step-by-step guides (setup, SmolVLA fine-tuning, editable lerobot, RTC sim rollout). This README is the project overview; detailed usage lives in each directory's own docs.
 
