@@ -67,18 +67,26 @@ plugins:
           build: true
           nav_translations:
             ホーム: Home
+            はじめに: Getting Started
             セットアップ: Setup
-            SmolVLA ファインチューニング: SmolVLA Fine-tuning
             lerobot editable 構成: lerobot Editable Setup
+            使い方ガイド: How-to Guides
+            SmolVLA ファインチューニング: SmolVLA Fine-tuning
             RTC sim ロールアウト: RTC Sim Rollout
+            sim スクリプトエキスパート収集: Sim Scripted Expert Collection
+            研究ノート: Research Notes
+            非同期レイテンシ実験（sync vs RTC）: Latency Experiments (sync vs RTC)
             overhead カメラ予測器による動的 pick: Overhead-Camera Predictor for Dynamic Pick
 
 nav:
   - ホーム: index.md
-  - セットアップ: setup.md
-  - SmolVLA ファインチューニング: smolvla-finetuning.md
-  - lerobot editable 構成: lerobot-editable-setup.md
-  - RTC sim ロールアウト: rtc-sim-rollout.md
-  - sim スクリプトエキスパート収集: sim-scripted-collect.md
-  - 非同期レイテンシ実験（sync vs RTC）: latency-experiments.md
-  - overhead カメラ予測器による動的 pick: overhead-predictor.md
+  - はじめに:
+      - セットアップ: setup.md
+      - lerobot editable 構成: lerobot-editable-setup.md
+  - 使い方ガイド:
+      - SmolVLA ファインチューニング: smolvla-finetuning.md
+      - RTC sim ロールアウト: rtc-sim-rollout.md
+      - sim スクリプトエキスパート収集: sim-scripted-collect.md
+  - 研究ノート:
+      - 非同期レイテンシ実験（sync vs RTC）: latency-experiments.md
+      - overhead カメラ予測器による動的 pick: overhead-predictor.md

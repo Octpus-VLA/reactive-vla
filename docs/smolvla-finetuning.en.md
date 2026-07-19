@@ -35,7 +35,7 @@ pixi run train \
 !!! note "About the output path"
     `output_dir` is always `outputs/train/<policy>/<dataset>/<timestamp>` (`MMDD_HHMM`). `--job-name` only sets the W&B display name and is never folded into the directory, so rerunning with the same `--job-name` won't collide with an existing directory. Check the training log (`--output_dir=...`) for the actual path.
 
-For W&B logging or pushing to the Hugging Face Hub, see the [README](https://github.com/Octpus-VLA/reactive-vla#trial-run-fine-tuning-smolvla-on-a-so-101-dataset).
+For W&B logging or pushing to the Hugging Face Hub, see the [README](https://github.com/Octpus-VLA/reactive-vla#fine-tuning).
 
 ## 3. Verify with offline inference (no robot needed)
 

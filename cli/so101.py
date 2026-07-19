@@ -57,7 +57,7 @@ class Role(StrEnum):
 
 
 class PredictorMode(StrEnum):
-    """How the Tier-3 cube predictor advances the cube (see lerobot.predictors.config).
+    """How the predictive-replan cube predictor advances the cube (see lerobot.predictors.config).
 
     - image_shift: edit RGB pixels (color-tracked velocity), policy re-encodes the frame.
     - latent_warp: rigidly translate the cube on the vision patch-token grid (no re-encode).
@@ -1058,7 +1058,7 @@ def sim_eval(
     predict_cube: bool = typer.Option(
         False,
         "--predict-cube/--no-predict-cube",
-        help="RTC only: enable the overhead cube predictor (Tier 3). The red cube is advanced forward on "
+        help="RTC only: enable the overhead cube predictor (predictive replan). The red cube is advanced forward on "
         "--predictor-camera before the frame is fed to the policy, so it aims ahead of the moving cube. "
         "The advance is inference-latency (the PE gap) plus --predictor-lead-s. Requires --rtc (the "
         "predictor feeds the RTC engine; the sync engine has no predictor support).",
@@ -1115,7 +1115,7 @@ def sim_eval(
     docs above describe.
 
     Add --predict-cube (requires --rtc) to advance the tracked cube forward on
-    --predictor-camera before feeding the frame to the policy — the Tier 3
+    --predictor-camera before feeding the frame to the policy — the predictive-replan
     predictor. The advance is the inference latency (same mechanism as
     `eval --predict-cube` on real hardware) plus --predictor-lead-s, so the policy
     aims ahead of the moving cube instead of trailing it. Sweep --predictor-lead-s

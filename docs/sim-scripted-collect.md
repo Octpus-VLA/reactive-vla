@@ -24,7 +24,7 @@
 
 > 以前は `belt_top` / `front_high` / `corner` も記録していたが、実際には使っていなかったため削除した（`overview`＝旧 `box_top` に一本化）。
 
-> **記録専用ビューは実機に存在しない固定外部カメラ**（手首カメラのみの実機に転送する把持ポリシーの入力には使わない）。cube 位置・速度の predictor（Tier 3）学習、配置成否の確認、可視化・解析のために残している。学習時は `--rename_map` / policy の入力カメラ指定で使うカメラだけを選べば、他は自動的に学習から除外される。`overview` は `mode="targetbody"` でロボット base を自動追尾するため `--belt-distance` を変えても画角を保つ。
+> **記録専用ビューは実機に存在しない固定外部カメラ**（手首カメラのみの実機に転送する把持ポリシーの入力には使わない）。cube 位置・速度の predictor 学習、配置成否の確認、可視化・解析のために残している。学習時は `--rename_map` / policy の入力カメラ指定で使うカメラだけを選べば、他は自動的に学習から除外される。`overview` は `mode="targetbody"` でロボット base を自動追尾するため `--belt-distance` を変えても画角を保つ。
 
 > **現在の標準ワークフローは `overview` を入力カメラにする**（`camera1=wrist_cam` は収集データには引き続き入っているが、学習時に使わない）。`jobs/train/smolvla.pbs` の既定 `CAMERA=overview` が `observation.images.overview → observation.images.camera1` に rename して学習する（`sim-eval` 側も `--policy-camera` の既定が `overview`）。理由は下記「掴む向きの調整」を参照。
 
@@ -82,7 +82,7 @@ MuJoCo の位置アクチュエータは重力負荷で droop する（肘で約
 2. **降下開始**: cube が「スイートスポットの `descend_lead_s` 手前」に来たら降下を始める（閉動作が中央付近で完了するように）。
 3. **追従把持**: 降下・grasp 中も cube の実 xy を追い続ける（到達窓 `±reach_window_y` でクランプ）。cube が動いていてもグリッパが一緒に動きながら閉じるので、後ろ側でなく cube を**囲んで**掴める。
 
-> 当初の「固定先読み点」方式は低速で失敗していた（cube が到達窓の端 y≈-0.12 = 腕が伸び切った姿勢で掴むことになり、lift で滑って落とす）。スイートスポット待ち受けにしたことで把持姿勢が全速度で一定になり解決。これは [CLAUDE.md](../CLAUDE.md) の Tier 3（predictive replan）のオフライン・特権情報版に相当する。
+> 当初の「固定先読み点」方式は低速で失敗していた（cube が到達窓の端 y≈-0.12 = 腕が伸び切った姿勢で掴むことになり、lift で滑って落とす）。スイートスポット待ち受けにしたことで把持姿勢が全速度で一定になり解決。これは [CLAUDE.md](https://github.com/Octpus-VLA/reactive-vla/blob/main/CLAUDE.md) の予測的リプラン（predictive replan）のオフライン・特権情報版に相当する。
 
 > **把持の瞬間に cube が減速する**のは正常な物理挙動。計測では approach/descend 中は cube はベルト速度ちょうど（例 0.08 m/s）で進み、ジャウが閉じた瞬間に速度が急減する（cube はベルト摩擦で動いていたが、ベルトより遅いグリッパに掴まれて速度を上書きされ、lift でベルト面を離れると以降はアームだけが支配するため）。現速度域（≤0.12 m/s）では把持成功に影響しないが、もっと速くする場合は把持の瞬間にグリッパを +y にベルト速度で動かす velocity matching が有効。
 
@@ -108,9 +108,3 @@ home キーフレームの `wrist_roll` を `0 → +90°`（[`assets/so101/scene
 - 生成データセットは `LeRobotDataset` で読み込め、`observation.state (6)` / `action (6)` / `observation.images.{camera1,overview} video` を持ち、`pixi run train` 互換（学習時は `CAMERA=overview` で overview を camera1 にリネーム）。
 
 > 過去の実測値（掴む向き調整前・`max_tcp_step=0.015`・jitter 0.03 の版）: 静止 4/4、固定速度各 4/4、jitter=0.03 のまま速度ランダム化すると 150ep で 59% まで低下（原因が上記の掴む向き変更起因の不安定性）。調査の経緯は [docs/latency-experiments.md](latency-experiments.md) 隣接のコミット履歴も参照。
-
-## 次の段階
-
-1. `OctpusVLA/sim_pickplace_standard`（150ep, 速度ランダム化, jitter 0.01）で SmolVLA をファインチューニング（`pixi run train` / `jobs/train/smolvla.pbs`）→ `pixi run sim-eval` で「動くか」を検証。
-2. ドメインランダム化（cube 色・ライティング・開始位置範囲）を増やしてロバスト性を上げる。
-3. オンライン化（特権情報を使わず観測のみで予測する Tier 3 predictor）への接続。
